@@ -102,8 +102,12 @@ python -m src.evaluate --preds "results/preds_*.jsonl" --out results/comparativo
 ```
 
 Imprime e salva uma tabela markdown com BLEU-1/4, ROUGE-L, CIDEr, BERTScore-F1, CLIPScore,
-RefCLIPScore e diversidade (Distinct-1/2, tamanho médio). Um exemplo pronto, sem precisar de
-GPU nem de dataset:
+RefCLIPScore e diversidade (Distinct-1/2, tamanho médio).
+
+Para ver as métricas funcionando antes de ter dataset, `data/sample/` traz um exemplo de
+mentira: 4 imagens que existem só como `image_id`, com legendas de referência escritas à mão e
+dois conjuntos de predições simuladas — uma com vocabulário técnico, outra genérica. **Não há
+arquivo de imagem ali**, então rode sem CLIPScore (que precisaria da imagem de verdade):
 
 ```bash
 python -m src.evaluate --preds "data/sample/*.jsonl" --refs data/sample/refs.jsonl --no-bertscore --no-clipscore
@@ -136,7 +140,7 @@ data/
   metadata.csv    proveniência e licença — versionado
   drafts.jsonl    rascunhos do Claude
   captions.jsonl  ground truth revisado — versionado
-  sample/         exemplo sintético para testar a avaliação
+  sample/         legendas fictícias (só texto, sem imagens) para testar a avaliação
 src/
   prepare_images.py   normalização + manifesto
   draft_captions.py   rascunhos via API
