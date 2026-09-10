@@ -1,0 +1,4 @@
+{"image_id": "demo_0001", "modelo": "demo-generico", "lang": "pt", "legenda": "Um grande barco na agua perto de um edificio.", "legenda_en": "a large boat in the water near a building", "traduzido_por": "Helsinki-NLP/opus-mt-tc-big-en-pt"}
+{"image_id": "demo_0002", "modelo": "demo-generico", "lang": "pt", "legenda": "Um barco na agua perto de uma cidade.", "legenda_en": "a boat in the water near a city", "traduzido_por": "Helsinki-NLP/opus-mt-tc-big-en-pt"}
+{"image_id": "demo_0003", "modelo": "demo-generico", "lang": "pt", "legenda": "Um caminhao amarelo estacionado num patio.", "legenda_en": "a yellow truck parked in a lot", "traduzido_por": "Helsinki-NLP/opus-mt-tc-big-en-pt"}
+{"image_id": "demo_0004", "modelo": "demo-generico", "lang": "pt", "legenda": "Um grande barco branco na agua perto de um edificio.", "legenda_en": "a large white boat in the water near a building", "traduzido_por": "Helsinki-NLP/opus-mt-tc-big-en-pt"}
