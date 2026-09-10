@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- projeto ---
+# Imagens ficam fora do versionamento (peso + direitos de uso).
+# O que e versionado: data/metadata.csv (proveniencia) e data/*.jsonl (legendas).
+data/raw/
+data/images/
+results/*.jsonl
