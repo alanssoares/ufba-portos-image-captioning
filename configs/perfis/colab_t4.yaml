@@ -30,3 +30,17 @@ training:
 
 generation:
   batch_size: 8
+
+# No Colab: so treino. Rotulos e split normalmente vem da maquina local (pasta data/
+# copiada para o Drive); `label` e `split` sao retomaveis/estaveis e nao refazem nada
+# que ja exista. No fim, `export` gera o pacote para a inferencia local.
+pipeline:
+  steps:
+    - label
+    - split
+    - train:base
+    - train:pretrain
+    - train:finetune
+    - train:lora
+    - train:qlora
+    - export

@@ -8,8 +8,9 @@ contra um VLM de fronteira.
 - **SLM:** **Manacá-1B** (`menezesbruno/manaca-1b-base`, Llama 1,7 B, PT-BR) + encoder **SigLIP**
   + projetor MLP, no estilo LLaVA.
 - **Modelo gold:** **Gemini Pro** via API, avaliado contra as mesmas referências.
-- Tudo parametrizado em [`configs/default.yaml`](configs/default.yaml); roda **localmente** e no
-  **Colab** ([`notebooks/colab_pipeline.ipynb`](notebooks/colab_pipeline.ipynb)).
+- Tudo parametrizado em [`configs/default.yaml`](configs/default.yaml).
+- **Treino no Colab** ([`notebooks/colab_pipeline.ipynb`](notebooks/colab_pipeline.ipynb), no navegador
+  ou no VS Code); **inferência e avaliação na máquina local**.
 
 Documentação: [metodologia das variantes](docs/metodologia-variantes.md) ·
 [conceitos e métricas](docs/image-captioning-metricas.md) ·
@@ -31,6 +32,8 @@ Documentação: [metodologia das variantes](docs/metodologia-variantes.md) ·
 [`docs/metodologia-variantes.md`](docs/metodologia-variantes.md).
 
 ## Instalação (local)
+
+No Colab o notebook instala tudo sozinho. Na máquina local:
 
 ```bash
 uv venv --python 3.11
@@ -57,32 +60,63 @@ chamada) e roda **o pipeline inteiro** — treino das 5 variantes, predição, a
 poucos minutos na CPU, em `outputs/smoke/`. As métricas não significam nada; o teste prova que
 as peças encaixam. O mesmo teste roda com `pytest` (`tests/test_smoke_pipeline.py`).
 
-## Pipeline
+## Fluxo de trabalho: dados e inferência locais, treino no Colab
+
+```
+ LOCAL                                   COLAB (GPU)                          LOCAL
+ prepare -> label -> split  ── Drive ──►  train base/pretrain/finetune/  ── modelos.zip ──►  import -> predict -> evaluate
+                                          lora/qlora -> export
+```
+
+**1. Local — dados**
+
+```bash
+python -m src prepare     # data/raw -> data/images (EXIF, 1024 px, dedup) + metadata.csv
+python -m src label       # Claude rotula todas as imagens -> data/labels.jsonl
+python -m src split       # treino / validação / teste -> data/splits.json
+```
+
+Copie `data/images/`, `data/labels.jsonl` e `data/splits.json` para
+`MyDrive/ufba-portos-captioning/data/` no Google Drive.
+
+**2. Colab — treino.** Abra [`notebooks/colab_pipeline.ipynb`](notebooks/colab_pipeline.ipynb) no Colab
+(ou no VS Code com a extensão *Google Colab*, escolhendo um servidor com GPU) e rode as células.
+Equivale a:
+
+```bash
+python -m src run --config configs/perfis/colab_l4.yaml --set paths.root=/content/drive/MyDrive/ufba-portos-captioning
+```
+
+que treina as 5 variantes e grava `exports/modelos.zip` no Drive.
+
+**3. Local — inferência e avaliação**
+
+```bash
+python -m src import --from C:/Users/<voce>/Downloads/modelos.zip
+python -m src run --config configs/perfis/local_4gb.yaml    # predict das 5 variantes + gold, evaluate
+```
+
+O pacote leva `labels.jsonl` e `splits.json` junto com os modelos, para que o teste local seja
+exatamente o do treino (arquivos locais diferentes ganham uma cópia `.bak-<data>`; nada é apagado).
+Cada variante guarda a impressão digital do split: se o `splits.json` local mudar, o `predict` avisa.
+
+> Treinar no Hugging Face de graça não é viável: o ZeroGPU gratuito dá 5 min de GPU por dia com
+> chamadas de 60 s (feito para demos), e o HF Jobs é pago.
+
+### Comandos
 
 Um único ponto de entrada: `python -m src <comando>`. Todo comando aceita
 `--config <perfil.yaml>` (repetível) e `--set chave.pontilhada=valor` (repetível).
 
-```bash
-python -m src prepare                 # data/raw -> data/images (EXIF, 1024 px, dedup) + metadata.csv
-python -m src label                   # Claude rotula todas as imagens -> data/labels.jsonl
-python -m src split                   # treino / validação / teste -> data/splits.json
-python -m src train --stage base      # materializa o modelo base
-python -m src train --stage pretrain
-python -m src train --stage finetune
-python -m src train --stage lora
-python -m src train --stage qlora
-python -m src predict --variant all   # legendas do teste: 5 variantes + gold
-python -m src evaluate                # results/comparativo.md e .csv
-```
-
-Ou tudo de uma vez, na ordem de `pipeline.steps`:
-
-```bash
-python -m src run --config configs/perfis/colab_l4.yaml
-python -m src run --from train:lora            # retoma de um passo
-python -m src run --only predict:gold evaluate # só alguns passos
-python -m src show-config --config configs/perfis/local_4gb.yaml   # config efetiva
-```
+| comando | o que faz |
+|---|---|
+| `prepare` / `label` / `split` | dados (acima) |
+| `train --stage base\|pretrain\|finetune\|lora\|qlora` | treina uma variante |
+| `export` / `import --from` | pacote de modelos Colab → local |
+| `predict --variant <v>\|all` | legendas do teste (`gold` = Gemini via API) |
+| `evaluate` | `results/comparativo.md` e `.csv` |
+| `run [--from X] [--only ...] [--skip ...]` | executa `pipeline.steps` do perfil em ordem |
+| `show-config` | imprime a config efetiva |
 
 `label` e `predict` são retomáveis (pulam o que já foi feito; `--redo` refaz). `split` é
 estável: imagens novas são sorteadas sem mexer no teste existente.
@@ -95,20 +129,19 @@ python -m src label --set labeling.model=claude-sonnet-5         # rotulador mai
 python -m src train --stage lora --set training.lora.r=32 --set training.lora.alpha=64
 python -m src train --stage qlora --set training.qlora.init_from=base
 python -m src predict --variant gold --set gold_model.model=gemini-3.1-pro-preview
+python -m src predict --variant all --config configs/perfis/local_4gb.yaml --set device=cpu
 python -m src evaluate --set evaluation.clipscore=false
 ```
 
-## Perfis de hardware (`configs/perfis/`)
+## Perfis (`configs/perfis/`)
 
-| perfil | GPU | observações |
+| perfil | onde | observações |
 |---|---|---|
-| `local_4gb` | 4 GB local | pré-treino com LLM em 4 bits, **QLoRA**, inferência em 4 bits. `finetune` e `lora` ficam fora — rode no Colab |
-| `colab_t4` | T4 15 GB | fp16; `finetune` **parcial** (últimas 8 camadas) — o completo não cabe |
-| `colab_l4` | L4 22,5 GB | bf16; fine-tuning completo (fp32 + Adam 8 bits paginado) |
-| `colab_a100` | A100 40 GB | bf16; tudo com folga |
-| `smoke` | nenhuma | teste de fumaça (acima) |
-
-Modelos treinados no Colab podem ser copiados para `outputs/models/` e avaliados localmente.
+| `local_4gb` | máquina local, GPU 4 GB | **só inferência + avaliação**; variantes carregadas em 4 bits (`--set device=cpu` para rodar sem quantizar, lento) |
+| `colab_t4` | Colab T4 15 GB | treino + export; fp16; `finetune` **parcial** (últimas 8 camadas) — o completo não cabe |
+| `colab_l4` | Colab L4 22,5 GB | treino + export; bf16; fine-tuning completo (fp32 + Adam 8 bits paginado) |
+| `colab_a100` | Colab A100 40 GB | treino + export; bf16; tudo com folga |
+| `smoke` | CPU | teste de fumaça do pipeline inteiro |
 
 ## Saídas
 
@@ -124,6 +157,7 @@ outputs/models/<variante>/   (fora do git)
   projector.safetensors
   llm/ | adapter/      LLM completo (finetune) ou adaptador PEFT (lora, qlora)
   train_summary.json   parâmetros treináveis, VRAM de pico, tempo, losses
+exports/modelos.zip     pacote Colab -> local (fora do git)
 results/
   preds_<variante>.jsonl
   comparativo.md       métricas + custo de treino + exemplos
@@ -147,6 +181,7 @@ src/train.py              estágios base / pretrain / finetune / lora / qlora
 src/predict.py            geração das variantes + modelo gold (Gemini)
 src/metrics_ptbr.py       métricas adaptadas ao PT-BR
 src/evaluate.py           tabela comparativa e relatório
+src/transfer.py           export / import do pacote de modelos
 src/devtools.py           dados sintéticos e modelos minúsculos (smoke test)
 notebooks/gerar_colab.py  gera o notebook do Colab
 tests/                    pytest
@@ -172,8 +207,9 @@ python -m src evaluate --preds "data/sample/preds_*.jsonl" --refs data/sample/re
 
 ## Limites conhecidos
 
-- **4 GB de VRAM**: só QLoRA e inferência em 4 bits. Fine-tuning completo e LoRA em 16 bits
-  vão para o Colab (L4 ou A100 com as unidades do Google AI Pro).
+- **4 GB de VRAM**: localmente só inferência, com as variantes em 4 bits — declare na monografia
+  (ou rode a inferência com `--set device=cpu`, sem quantizar). Todo treino vai para o Colab
+  (L4 ou A100 com as unidades do Google AI Pro).
 - **Referências de LLM**: as métricas medem proximidade ao rotulador (Claude), não a anotadores
   humanos — declare na monografia.
 - **Gemini API**: a assinatura Google AI Pro não inclui a API; a chave vem do Google AI Studio.

@@ -60,6 +60,7 @@ pipeline:
     - train:finetune
     - train:lora
     - train:qlora
+    - export
     - predict:base
     - predict:pretrain
     - predict:finetune

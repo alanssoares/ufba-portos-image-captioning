@@ -226,6 +226,7 @@ results/*.jsonl
 
 # Modelos treinados, modelos minusculos do smoke test e checkpoints (grandes)
 outputs/
+exports/
 # Predicoes e metricas regeneraveis; o relatorio comparativo e versionado
 results/metrics_*.json
 results/config_efetiva.yaml
