@@ -1,4 +1,4 @@
-"""Prompt de dominio para geracao de rascunhos de legenda em PT-BR."""
+"""Prompts de dominio: rotulagem (Claude) e legenda unica do modelo gold (Gemini)."""
 
 GLOSSARIO = """\
 Vocabulario tecnico portuario (use estes termos quando o elemento aparecer):
@@ -33,8 +33,18 @@ Regras para cada legenda:
 6. Se a imagem nao for de ambiente portuario, diga isso em `observacao` e marque
    `fora_de_dominio` como verdadeiro.
 
-Estas legendas serao revisadas por um humano — prefira ser conservador a ser especifico
-demais.\
+Estas legendas serao usadas como referencia para treinar e avaliar outros modelos —
+prefira ser conservador a ser especifico demais.\
 """
 
 USER_PROMPT = "Gere as legendas de referencia para esta imagem."
+
+# Modelo gold: mesma orientacao de dominio, mas UMA legenda em texto puro.
+GOLD_INSTRUCTION = (
+    "Escreva UMA unica legenda para esta imagem, em portugues do Brasil, seguindo as regras "
+    "acima (uma frase de 12 a 30 palavras). Responda apenas com a legenda, sem aspas."
+)
+GOLD_INSTRUCTION_SEM_DOMINIO = (
+    "Descreva esta imagem em uma unica frase em portugues do Brasil, com 12 a 30 palavras. "
+    "Responda apenas com a legenda, sem aspas."
+)

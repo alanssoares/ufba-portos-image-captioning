@@ -1,0 +1,20 @@
+# Colab com GPU A100 (40 GB, bf16 nativo). Tudo cabe com folga, inclusive o
+# fine-tuning completo em fp32 com AdamW 8 bits.
+
+model:
+  dtype: bf16
+  attn_implementation: sdpa
+
+training:
+  common:
+    batch_size: 8
+    grad_accum: 2
+    gradient_checkpointing: false
+    num_workers: 4
+  finetune:
+    llm_mode: full
+    optim: adamw_8bit
+    gradient_checkpointing: true
+
+generation:
+  batch_size: 32

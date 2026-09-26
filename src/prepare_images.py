@@ -1,8 +1,8 @@
 """Normaliza as imagens brutas e mantem o manifesto de proveniencia.
 
 Uso:
-    python -m src.prepare_images
-    python -m src.prepare_images --src data/raw --dst data/images --max-side 1024
+    python -m src prepare
+    python -m src prepare --set prepare.max_side=768
 
 O que faz:
   - percorre data/raw (recursivamente);
@@ -14,7 +14,6 @@ O que faz:
 """
 from __future__ import annotations
 
-import argparse
 import csv
 import datetime as dt
 import hashlib
@@ -22,7 +21,8 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-from .common import IMAGE_EXTS, IMAGES_DIR, METADATA_CSV, RAW_DIR
+from .common import IMAGE_EXTS
+from .config import Config, resolve_path
 
 FIELDS = [
     "image_id",
@@ -71,25 +71,23 @@ def next_index(rows: list[dict[str, str]]) -> int:
     return best + 1
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--src", type=Path, default=RAW_DIR)
-    parser.add_argument("--dst", type=Path, default=IMAGES_DIR)
-    parser.add_argument("--manifest", type=Path, default=METADATA_CSV)
-    parser.add_argument("--max-side", type=int, default=1024, help="lado maior em pixels (0 = nao redimensiona)")
-    parser.add_argument("--quality", type=int, default=92)
-    parser.add_argument("--prefix", default="psa", help="prefixo dos ids (psa = Porto de Salvador)")
-    args = parser.parse_args()
+def run(cfg: Config) -> None:
+    src_dir = resolve_path(cfg, "raw_dir")
+    dst_dir = resolve_path(cfg, "images_dir")
+    manifest = resolve_path(cfg, "metadata_csv")
+    max_side = int(cfg.prepare.max_side)
+    quality = int(cfg.prepare.quality)
+    prefix = cfg.prepare.prefix
 
-    args.dst.mkdir(parents=True, exist_ok=True)
-    rows = load_manifest(args.manifest)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    rows = load_manifest(manifest)
     seen = {row["sha1"]: row for row in rows}
     idx = next_index(rows)
     hoje = dt.date.today().isoformat()
 
-    sources = sorted(p for p in args.src.rglob("*") if p.suffix.lower() in IMAGE_EXTS)
+    sources = sorted(p for p in src_dir.rglob("*") if p.suffix.lower() in IMAGE_EXTS) if src_dir.exists() else []
     if not sources:
-        print(f"Nenhuma imagem encontrada em {args.src}. Coloque os arquivos originais la primeiro.")
+        print(f"Nenhuma imagem encontrada em {src_dir}. Coloque os arquivos originais la primeiro.")
         return
 
     novas = duplicadas = falhas = 0
@@ -101,10 +99,10 @@ def main() -> None:
         try:
             with Image.open(src) as img:
                 img = ImageOps.exif_transpose(img).convert("RGB")
-                if args.max_side and max(img.size) > args.max_side:
-                    img.thumbnail((args.max_side, args.max_side), Image.LANCZOS)
-                image_id = f"{args.prefix}_{idx:04d}"
-                img.save(args.dst / f"{image_id}.jpg", "JPEG", quality=args.quality)
+                if max_side and max(img.size) > max_side:
+                    img.thumbnail((max_side, max_side), Image.LANCZOS)
+                image_id = f"{prefix}_{idx:04d}"
+                img.save(dst_dir / f"{image_id}.jpg", "JPEG", quality=quality)
                 largura, altura = img.size
         except Exception as exc:  # imagem corrompida, formato exotico, etc.
             print(f"  ! falhou em {src.name}: {exc}")
@@ -114,7 +112,7 @@ def main() -> None:
         row = {
             "image_id": image_id,
             "sha1": digest,
-            "arquivo_origem": str(src.relative_to(args.src)),
+            "arquivo_origem": str(src.relative_to(src_dir)),
             "largura": str(largura),
             "altura": str(altura),
             "fonte": "",
@@ -128,12 +126,8 @@ def main() -> None:
         idx += 1
         novas += 1
 
-    save_manifest(args.manifest, rows)
+    save_manifest(manifest, rows)
     print(f"{novas} novas, {duplicadas} duplicadas ignoradas, {falhas} falhas. Total no manifesto: {len(rows)}.")
     faltando = [r["image_id"] for r in rows if not r["licenca"]]
     if faltando:
-        print(f"ATENCAO: {len(faltando)} imagens sem licenca preenchida em {args.manifest.name}.")
-
-
-if __name__ == "__main__":
-    main()
+        print(f"ATENCAO: {len(faltando)} imagens sem licenca preenchida em {manifest.name}.")

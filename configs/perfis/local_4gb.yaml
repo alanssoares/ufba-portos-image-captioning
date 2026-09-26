@@ -1,0 +1,49 @@
+# Maquina local com GPU de 4 GB (ex: GTX 1650 / RTX 3050 notebook).
+#
+# O Manaca-1B em fp16 ocupa ~3,4 GB so de pesos, entao localmente:
+#   - pre-treino: LLM congelado carregado em 4 bits (so o projetor treina);
+#   - QLoRA: cabe (e para isso que ele existe);
+#   - finetune e lora (LLM em 16 bits): NAO cabem -> rode no Colab;
+#   - inferencia: todas as variantes carregadas em 4 bits (generation.load_4bit).
+#     Isso muda a comparacao (quantizacao na inferencia) — registre na monografia.
+#
+# Os passos que nao cabem ficam fora de pipeline.steps; os modelos treinados no
+# Colab podem ser copiados para outputs/models/ e avaliados aqui.
+
+model:
+  dtype: fp16
+
+training:
+  common:
+    batch_size: 1
+    grad_accum: 16
+    gradient_checkpointing: true
+  pretrain:
+    quantize_4bit: true
+    quant:
+      quant_type: nf4
+      double_quant: true
+      compute_dtype: fp16
+  qlora:
+    optim: paged_adamw_8bit
+
+generation:
+  batch_size: 2
+  load_4bit: true
+
+evaluation:
+  device: cpu     # BERTScore/CLIPScore na CPU para nao disputar a VRAM
+
+pipeline:
+  steps:
+    - prepare
+    - label
+    - split
+    - train:base
+    - train:pretrain
+    - train:qlora
+    - predict:base
+    - predict:pretrain
+    - predict:qlora
+    - predict:gold
+    - evaluate

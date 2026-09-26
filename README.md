@@ -1,163 +1,179 @@
 # Image Captioning no domínio portuário — Porto de Salvador (BA)
 
-Pipeline para montar um dataset próprio de imagens do porto, gerar legendas em
-**português do Brasil** com diferentes modelos e compará-los com métricas automáticas.
+Avaliação de um **SLM em português do Brasil** para legendar imagens do porto, comparando
+seis variantes do mesmo modelo — do base sem treino até fine-tuning completo, LoRA e QLoRA —
+contra um VLM de fronteira.
 
-Referências de domínio e de avaliação estão em [`docs/`](docs/):
-[domínio portuário](docs/dominio-porto-salvador.md) e
-[conceitos e métricas](docs/image-captioning-metricas.md).
+- **Referências:** legendas geradas pelo **Claude** (`claude-opus-5-5`) para todas as imagens.
+- **SLM:** **Manacá-1B** (`menezesbruno/manaca-1b-base`, Llama 1,7 B, PT-BR) + encoder **SigLIP**
+  + projetor MLP, no estilo LLaVA.
+- **Modelo gold:** **Gemini Pro** via API, avaliado contra as mesmas referências.
+- Tudo parametrizado em [`configs/default.yaml`](configs/default.yaml); roda **localmente** e no
+  **Colab** ([`notebooks/colab_pipeline.ipynb`](notebooks/colab_pipeline.ipynb)).
 
-## A hipótese do trabalho
+Documentação: [metodologia das variantes](docs/metodologia-variantes.md) ·
+[conceitos e métricas](docs/image-captioning-metricas.md) ·
+[domínio portuário](docs/dominio-porto-salvador.md).
 
-Modelos genéricos de captioning descrevem uma foto do Tecon como *"a large ship at a dock"*.
-O vocabulário técnico (portêiner, transtêiner, reach stacker, berço) simplesmente não aparece.
-Medir esse **gap de domínio** — em quanto cada modelo fica abaixo da referência humana, e onde
-exatamente ele erra — é o resultado central do projeto.
+## As variantes
 
-## Instalação
+| variante | o que é |
+|---|---|
+| `base` | Manacá + SigLIP com projetor aleatório — limite inferior, sem treino |
+| `pretrain` | pré-treino adaptativo de domínio: só o projetor aprende (etapa 1 do LLaVA) |
+| `finetune` | fine-tuning completo: projetor + todos os pesos do LLM |
+| `lora` | LoRA no LLM (16 bits) + projetor |
+| `qlora` | LoRA sobre o LLM quantizado em 4 bits (NF4) + projetor |
+| `gold` | Gemini Pro via API — teto externo |
+
+`finetune`, `lora` e `qlora` partem do `pretrain` por padrão
+(`--set training.<estagio>.init_from=base` para partir do base). Detalhes e justificativas em
+[`docs/metodologia-variantes.md`](docs/metodologia-variantes.md).
+
+## Instalação (local)
 
 ```bash
 uv venv --python 3.11
-```
-
-```bash
 uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-```
-
-```bash
 uv pip install -r requirements.txt
 ```
 
-O PyTorch vai primeiro, no índice da CUDA certa (`cu124` para o driver 566.x desta máquina);
-o `requirements.txt` traz o resto. Sem GPU, troque o índice por `cpu` — tudo funciona, só
-mais devagar.
-
-Para os rascunhos via API, exporte a chave:
+O PyTorch vai primeiro, no índice da CUDA certa (`cu124` para o driver 566.x). Sem GPU, troque
+o índice por `cpu`. Chaves de API como variáveis de ambiente:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+export ANTHROPIC_API_KEY=sk-ant-...   # rotulagem (Claude)
+export GEMINI_API_KEY=...             # modelo gold (aistudio.google.com/apikey)
 ```
+
+## Teste rápido, sem dataset
+
+```bash
+python -m src run --config configs/perfis/smoke.yaml
+```
+
+Gera imagens sintéticas e modelos minúsculos aleatórios (nada é baixado, nenhuma API é
+chamada) e roda **o pipeline inteiro** — treino das 5 variantes, predição, avaliação — em
+poucos minutos na CPU, em `outputs/smoke/`. As métricas não significam nada; o teste prova que
+as peças encaixam. O mesmo teste roda com `pytest` (`tests/test_smoke_pipeline.py`).
 
 ## Pipeline
 
-### 1. Coletar e normalizar imagens
-
-Jogue os arquivos originais em `data/raw/` (subpastas são percorridas) e rode:
+Um único ponto de entrada: `python -m src <comando>`. Todo comando aceita
+`--config <perfil.yaml>` (repetível) e `--set chave.pontilhada=valor` (repetível).
 
 ```bash
-python -m src.prepare_images
+python -m src prepare                 # data/raw -> data/images (EXIF, 1024 px, dedup) + metadata.csv
+python -m src label                   # Claude rotula todas as imagens -> data/labels.jsonl
+python -m src split                   # treino / validação / teste -> data/splits.json
+python -m src train --stage base      # materializa o modelo base
+python -m src train --stage pretrain
+python -m src train --stage finetune
+python -m src train --stage lora
+python -m src train --stage qlora
+python -m src predict --variant all   # legendas do teste: 5 variantes + gold
+python -m src evaluate                # results/comparativo.md e .csv
 ```
 
-Corrige orientação EXIF, converte para RGB, reduz o lado maior para 1024 px, deduplica por
-SHA-1 e salva como `data/images/psa_XXXX.jpg`. Cria `data/metadata.csv` com uma linha por
-imagem — **preencha as colunas `fonte`, `url` e `licenca` à mão**; sem isso o dataset não é
-publicável nem citável.
-
-### 2. Rascunhar as legendas
+Ou tudo de uma vez, na ordem de `pipeline.steps`:
 
 ```bash
-python -m src.draft_captions --limit 5     # comece pequeno para ver o custo
-python -m src.draft_captions               # todas as pendentes
+python -m src run --config configs/perfis/colab_l4.yaml
+python -m src run --from train:lora            # retoma de um passo
+python -m src run --only predict:gold evaluate # só alguns passos
+python -m src show-config --config configs/perfis/local_4gb.yaml   # config efetiva
 ```
 
-Usa Claude com o vocabulário portuário no *system prompt* e saída estruturada (3 legendas +
-objetos visíveis + flag de fora-de-domínio) → `data/drafts.jsonl`. Está ligado o
-`fallbacks` do lado do servidor: se um classificador recusar uma imagem, a API reroteia em
-vez de devolver `stop_reason: "refusal"` (desligue com `--no-fallbacks`).
+`label` e `predict` são retomáveis (pulam o que já foi feito; `--redo` refaz). `split` é
+estável: imagens novas são sorteadas sem mexer no teste existente.
 
-**Isto ainda não é ground truth.**
-
-### 3. Revisar (a etapa que gera o dado real)
+### Exemplos de parâmetros
 
 ```bash
-python -m streamlit run src/review_app.py
+python -m src label --set labeling.limit=5                      # teste de custo
+python -m src label --set labeling.model=claude-sonnet-5         # rotulador mais barato
+python -m src train --stage lora --set training.lora.r=32 --set training.lora.alpha=64
+python -m src train --stage qlora --set training.qlora.init_from=base
+python -m src predict --variant gold --set gold_model.model=gemini-3.1-pro-preview
+python -m src evaluate --set evaluation.clipscore=false
 ```
 
-Imagem à esquerda, as 3 legendas editáveis à direita. Corrija, descarte o que não for cena
-portuária, e salve — o resultado vai para `data/captions.jsonl`, que é a referência usada na
-avaliação. Legenda revisada por humano é o que separa um dataset de um monte de saída de LLM.
+## Perfis de hardware (`configs/perfis/`)
 
-### 4. Gerar predições
+| perfil | GPU | observações |
+|---|---|---|
+| `local_4gb` | 4 GB local | pré-treino com LLM em 4 bits, **QLoRA**, inferência em 4 bits. `finetune` e `lora` ficam fora — rode no Colab |
+| `colab_t4` | T4 15 GB | fp16; `finetune` **parcial** (últimas 8 camadas) — o completo não cabe |
+| `colab_l4` | L4 22,5 GB | bf16; fine-tuning completo (fp32 + Adam 8 bits paginado) |
+| `colab_a100` | A100 40 GB | bf16; tudo com folga |
+| `smoke` | nenhuma | teste de fumaça (acima) |
 
-```bash
-python -m src.run_captioning --model blip --translate
-python -m src.run_captioning --model florence2 --translate
-python -m src.run_captioning --model qwen25vl
-python -m src.run_captioning --model claude
+Modelos treinados no Colab podem ser copiados para `outputs/models/` e avaliados localmente.
+
+## Saídas
+
+```
+data/
+  raw/                 imagens originais (fora do git)
+  images/              normalizadas, psa_XXXX.jpg (fora do git)
+  metadata.csv         proveniência e licença — preencha fonte/url/licenca
+  labels.jsonl         legendas de referência (Claude)
+  splits.json          treino / validação / teste
+outputs/models/<variante>/   (fora do git)
+  vlm_config.json      de onde vem cada peso, prompt, pooling
+  projector.safetensors
+  llm/ | adapter/      LLM completo (finetune) ou adaptador PEFT (lora, qlora)
+  train_summary.json   parâmetros treináveis, VRAM de pico, tempo, losses
+results/
+  preds_<variante>.jsonl
+  comparativo.md       métricas + custo de treino + exemplos
+  comparativo.csv
+  config_efetiva.yaml  config exata da última execução de `run`
 ```
 
-Saída em `results/preds_<modelo>.jsonl`. Modelos disponíveis:
+## Estrutura do código
 
-| `--model` | O que é | VRAM (fp16) | Idioma |
-|---|---|---|---|
-| `blip` / `blip-base` | BLIP, baseline encoder-decoder clássico | ~0,9 / ~0,5 GB | EN → traduzido |
-| `florence2` / `florence2-base` | Florence-2, task `<MORE_DETAILED_CAPTION>` | ~1,6 / ~0,5 GB | EN → traduzido |
-| `qwen25vl` | Qwen2.5-VL-3B em 4 bits | ~2,5 GB | PT-BR direto |
-| `claude` | VLM via API — teto de qualidade | — | PT-BR direto |
-
-### 5. Avaliar
-
-```bash
-python -m src.evaluate --preds "results/preds_*.jsonl" --out results/comparativo.md
 ```
-
-Imprime e salva uma tabela markdown com BLEU-1/4, ROUGE-L, CIDEr, BERTScore-F1, CLIPScore,
-RefCLIPScore e diversidade (Distinct-1/2, tamanho médio).
-
-Para ver as métricas funcionando antes de ter dataset, `data/sample/` traz um exemplo de
-mentira: 4 imagens que existem só como `image_id`, com legendas de referência escritas à mão e
-dois conjuntos de predições simuladas — uma com vocabulário técnico, outra genérica. **Não há
-arquivo de imagem ali**, então rode sem CLIPScore (que precisaria da imagem de verdade):
-
-```bash
-python -m src.evaluate --preds "data/sample/*.jsonl" --refs data/sample/refs.jsonl --no-bertscore --no-clipscore
+configs/default.yaml      todos os parâmetros, comentados
+configs/perfis/*.yaml     sobreposições por hardware
+src/cli.py                python -m src <comando>
+src/config.py             YAML em camadas + --set
+src/prepare_images.py     normalização + manifesto
+src/labeling.py           rotulagem com o Claude
+src/prompts.py            glossário portuário e instruções
+src/splits.py             divisão estável
+src/vlm.py                SigLIP + projetor + Manacá; salvar/carregar variantes
+src/train.py              estágios base / pretrain / finetune / lora / qlora
+src/predict.py            geração das variantes + modelo gold (Gemini)
+src/metrics_ptbr.py       métricas adaptadas ao PT-BR
+src/evaluate.py           tabela comparativa e relatório
+src/devtools.py           dados sintéticos e modelos minúsculos (smoke test)
+notebooks/gerar_colab.py  gera o notebook do Colab
+tests/                    pytest
 ```
 
 ## Decisões de avaliação (adaptadas ao PT-BR)
 
-- **Tokenizador próprio** em vez do `PTBTokenizer` do `pycocoevalcap`: o original depende de
-  JAR do Stanford CoreNLP (Java) e foi feito para o inglês. Aqui é NFC + minúsculas + hífen
-  vira espaço + pontuação removida, acentos preservados. Nenhuma etapa do projeto precisa de Java.
-- **METEOR e SPICE ficaram de fora**: ambos exigem Java, e o METEOR ainda depende de WordNet
-  em inglês para sinônimos. Em PT-BR o ganho não paga o atrito — está documentado em
-  [`src/metrics_ptbr.py`](src/metrics_ptbr.py) para citar na monografia.
-- **CIDEr** calcula o IDF a partir do próprio conjunto avaliado: com menos de ~100 imagens o
-  valor é instável. A tabela sempre reporta o `N` junto.
-- **BERTScore** usa BERTimbau (`neuralmind/bert-base-portuguese-cased`); **CLIPScore** usa o
-  encoder de texto multilíngue alinhado ao CLIP ViT-B/32 — CLIPScore compara a legenda com a
-  **imagem**, então funciona mesmo onde ainda não há referência humana.
-- **A tradução EN→PT é uma variável do experimento**, não um detalhe: BLIP e Florence-2 são
-  avaliados através do MarianMT. Por isso `legenda_en` fica gravada junto da legenda traduzida —
-  dá para separar erro de percepção visual de erro de tradução. Alguns checkpoints do OPUS
-  pedem prefixo de variante (`--mt-prefix ">>por<<"`); confira o model card do que você usar.
+- **Tokenizador próprio** em vez do `PTBTokenizer` do `pycocoevalcap` (que depende de Java e foi
+  feito para o inglês): NFC + minúsculas + hífen vira espaço + pontuação removida, acentos
+  preservados. Como o Manacá gera tudo em minúsculas, normalizar a caixa também evita penalizá-lo.
+- **METEOR e SPICE ficaram de fora**: exigem Java, e o METEOR depende de WordNet em inglês.
+- **CIDEr** calcula o IDF no próprio conjunto avaliado: com menos de ~100 imagens é instável.
+  A tabela sempre traz o `N`.
+- **BERTScore** usa BERTimbau; **CLIPScore** usa o encoder de texto multilíngue alinhado ao CLIP
+  ViT-B/32 — compara a legenda com a **imagem**, sem depender da referência.
 
-## Estrutura
+Para ver as métricas funcionando sem modelo nenhum, `data/sample/` traz legendas de mentira
+(só texto, sem imagem):
 
-```
-data/
-  raw/            imagens originais (fora do git)
-  images/         normalizadas, psa_XXXX.jpg (fora do git)
-  metadata.csv    proveniência e licença — versionado
-  drafts.jsonl    rascunhos do Claude
-  captions.jsonl  ground truth revisado — versionado
-  sample/         legendas fictícias (só texto, sem imagens) para testar a avaliação
-src/
-  prepare_images.py   normalização + manifesto
-  draft_captions.py   rascunhos via API
-  review_app.py       revisão humana (Streamlit)
-  captioners.py       registry dos modelos
-  translate.py        MarianMT EN→PT
-  run_captioning.py   roda um modelo sobre a pasta de imagens
-  metrics_ptbr.py     métricas adaptadas ao PT-BR
-  evaluate.py         comparação entre modelos
-results/          predições e métricas
+```bash
+python -m src evaluate --preds "data/sample/preds_*.jsonl" --refs data/sample/refs.jsonl --set evaluation.bertscore=false --set evaluation.clipscore=false
 ```
 
 ## Limites conhecidos
 
-- **4 GB de VRAM** dão conta de inferência até ~1B em fp16. Fine-tuning (LoRA no BLIP, por
-  exemplo) não cabe local — use Colab com T4.
-- `qwen25vl` em 4 bits fica no limite dos 4 GB; se estourar, reduza `--max-side` na etapa 1
-  ou rode com `--device cpu` (lento).
-- O Florence-2 usa `trust_remote_code=True`; há um patch em `captioners.py` que remove o
-  import de `flash_attn` (não existe wheel para Windows).
+- **4 GB de VRAM**: só QLoRA e inferência em 4 bits. Fine-tuning completo e LoRA em 16 bits
+  vão para o Colab (L4 ou A100 com as unidades do Google AI Pro).
+- **Referências de LLM**: as métricas medem proximidade ao rotulador (Claude), não a anotadores
+  humanos — declare na monografia.
+- **Gemini API**: a assinatura Google AI Pro não inclui a API; a chave vem do Google AI Studio.
