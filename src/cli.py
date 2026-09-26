@@ -9,6 +9,8 @@ Comandos:
     evaluate      metricas + relatorio results/comparativo.md
     run           executa pipeline.steps em ordem (--from, --only, --skip)
     show-config   imprime a config efetiva (depois de perfis e --set)
+    export        empacota modelos treinados + labels + splits (Colab -> local)
+    import        instala um pacote exportado (--from zip ou pasta)
     dummy-data    imagens e rotulos sinteticos (teste sem dataset)
     tiny-models   modelos minusculos aleatorios (teste sem GPU/download)
 
@@ -62,6 +64,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preds", nargs="+", default=None, help="glob(s) de preds_*.jsonl (padrao: variantes da config)")
     p.add_argument("--refs", type=Path, default=None, help="arquivo de referencias (padrao: labels + split de teste)")
 
+    p = sub.add_parser("export")
+    _add_common(p)
+    p.add_argument("--out", type=Path, default=None, help="caminho do zip (padrao: <root>/exports/modelos.zip)")
+    p.add_argument("--with-images", action="store_true", default=None)
+
+    p = sub.add_parser("import")
+    _add_common(p)
+    p.add_argument("--from", dest="source", type=Path, required=True, help="zip exportado ou pasta com a mesma estrutura")
+
     p = sub.add_parser("run")
     _add_common(p)
     p.add_argument("--from", dest="start", default=None, help="comeca neste passo (ex: train:lora)")
@@ -97,6 +108,10 @@ def execute_step(cfg: Config, step: str, redo: bool = False) -> None:
         from .evaluate import run
 
         run(cfg)
+    elif nome == "export":
+        from .transfer import export
+
+        export(cfg)
     elif nome == "dummy-data":
         from .devtools import make_dummy_data
 
@@ -130,6 +145,14 @@ def main(argv: list[str] | None = None) -> None:
         from .evaluate import run
 
         run(cfg, preds_glob=args.preds, refs_path=args.refs)
+    elif args.cmd == "export":
+        from .transfer import export
+
+        export(cfg, out=args.out, with_images=args.with_images)
+    elif args.cmd == "import":
+        from .transfer import import_
+
+        import_(cfg, args.source)
     elif args.cmd == "run":
         passos = list(cfg.pipeline.steps)
         if args.only:

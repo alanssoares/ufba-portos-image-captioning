@@ -25,23 +25,21 @@ def code(texto):
 
 
 md(f"""
-# Image Captioning PT-BR — Porto de Salvador: SLM base × pré-treino × fine-tuning × LoRA × QLoRA
+# Treino no Colab — SLM PT-BR para legendas do Porto de Salvador
 
-Este notebook roda o experimento completo no Colab:
+Divisão de trabalho do projeto:
 
-1. **rotular** as imagens com o Claude (`claude-opus-5-5`) — legendas de referência de todos os splits;
-2. **dividir** em treino / validação / teste;
-3. **treinar** as variantes do SLM (Manacá-1B + encoder SigLIP + projetor):
-   `base` → `pretrain` → `finetune` / `lora` / `qlora`;
-4. **gerar** as legendas do teste com cada variante e com o **modelo gold** (Gemini Pro, via API);
-5. **comparar** tudo por métricas (BLEU, ROUGE-L, CIDEr, BERTScore, CLIPScore) e custo de treino.
+- **máquina local:** preparar imagens, rotular (Claude), dividir, **inferência e avaliação**;
+- **Colab (este notebook):** **treino** das variantes `base` → `pretrain` → `finetune` / `lora` / `qlora`
+  e exportação de um pacote `modelos.zip` para a inferência local.
 
 O notebook **não duplica código**: clona o repositório [`ufba-portos-image-captioning`]({REPO.replace('.git', '')})
-e chama `python -m src ...`, exatamente como na sua máquina. Toda escolha é parâmetro de
-`configs/default.yaml`, ajustável por perfil (`configs/perfis/*.yaml`) ou por `--set chave=valor`.
+e chama `python -m src ...`, como na sua máquina. Parâmetros em `configs/default.yaml`,
+perfis em `configs/perfis/`, ajustes com `--set chave=valor`.
 
-**GPU:** `Ambiente de execução → Alterar o tipo de ambiente de execução`.
-O plano Google AI Pro inclui unidades de computação do Colab — dá para escolher **L4** ou **A100**.
+Funciona no navegador **e no VS Code** (extensão oficial *Google Colab*: abra este `.ipynb`,
+*Select Kernel → Colab → New Colab Server* e escolha a GPU). No VS Code, os arquivos da sua
+máquina **não** aparecem no servidor — os dados chegam pelo Google Drive, como abaixo.
 
 | GPU | perfil | fine-tuning |
 |---|---|---|
@@ -66,9 +64,8 @@ print("GPU:", gpu.strip() or "nenhuma", "| perfil:", PERFIL)
 md(f"""
 ## 2. Clonar o repositório (sempre a `{BRANCH}`)
 
-Se a pasta já existir de uma execução anterior, a célula só faz `git pull`.
-Se o repo for **privado**, o clone falha: compacte a pasta do projeto, suba pelo painel de
-arquivos e descompacte em `/content`. Não coloque token do GitHub no notebook.
+Se a pasta já existir, só faz `git pull`. Repo **privado**: suba a pasta do projeto compactada e
+descompacte em `/content`. Não coloque token do GitHub no notebook.
 """)
 
 code(f"""
@@ -90,8 +87,7 @@ else:
 md("""
 ## 3. Dependências
 
-O Colab já traz PyTorch. Se aparecer o aviso pedindo para reiniciar a sessão, reinicie e
-continue da célula 4.
+O Colab já traz PyTorch. Se pedir para reiniciar a sessão, reinicie e continue da célula 4.
 """)
 
 code("""
@@ -102,58 +98,43 @@ print("torch", torch.__version__, "| CUDA:", torch.cuda.is_available())
 """)
 
 md("""
-## 4. Onde os dados e os modelos vivem
+## 4. Google Drive: dados de entrada e modelos de saída
 
-Sessão do Colab morre e leva tudo junto — por isso tudo (imagens, rótulos, modelos, resultados)
-vai para o **Google Drive** por padrão. O fine-tuning completo ocupa ~3,5 GB; o resto é pequeno.
+Antes de rodar, copie para o Drive a pasta `data/` da sua máquina (depois de `prepare`, `label` e
+`split` locais):
 
-`ARGS` é repassado a todo comando: perfil de GPU + raiz dos caminhos. Para mudar qualquer
-parâmetro, acrescente `--set chave=valor` (ex: `--set training.lora.r=32`).
+```
+MyDrive/ufba-portos-captioning/data/images/       imagens normalizadas
+MyDrive/ufba-portos-captioning/data/labels.jsonl  legendas do Claude
+MyDrive/ufba-portos-captioning/data/splits.json   treino/validação/teste
+```
+
+Os modelos treinados e o pacote `exports/modelos.zip` são gravados na mesma pasta.
+
+**VS Code:** se `drive.mount` falhar, rode o comando *Colab: Mount Google Drive to Server...*
+(paleta de comandos) e execute a célula de novo.
 """)
 
 code("""
 from pathlib import Path
 
-USAR_DRIVE = True  # False = tudo em /content/work (some quando a sessão cair)
-
-if USAR_DRIVE:
+BASE = Path("/content/drive/MyDrive/ufba-portos-captioning")
+if not Path("/content/drive/MyDrive").exists():
     from google.colab import drive
     drive.mount("/content/drive")
-    BASE = Path("/content/drive/MyDrive/ufba-portos-captioning")
-else:
-    BASE = Path("/content/work")
 BASE.mkdir(parents=True, exist_ok=True)
 
 ARGS = f"--config configs/perfis/{PERFIL}.yaml --set paths.root={BASE}"
-print("Raiz:", BASE)
-!python -m src show-config {ARGS} | head -40
+for nome in ("data/labels.jsonl", "data/splits.json"):
+    print(f"{nome}: {'ok' if (BASE / nome).exists() else 'FALTANDO'}")
+print("imagens:", len(list((BASE / "data" / "images").glob("*.jpg"))))
 """)
 
 md("""
-## 5. Chaves de API (Secrets do Colab)
+## 5. (Opcional) Teste de fumaça
 
-Crie, no ícone da chave 🔑 da barra lateral, os secrets **`ANTHROPIC_API_KEY`** (rotulagem) e
-**`GEMINI_API_KEY`** (modelo gold — gere em aistudio.google.com/apikey; a assinatura Google AI Pro
-não inclui a API, mas o AI Studio tem cota gratuita). Nunca escreva chave numa célula.
-""")
-
-code("""
-import os
-from google.colab import userdata
-
-for nome in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
-    try:
-        os.environ[nome] = userdata.get(nome)
-        print(f"{nome}: carregada")
-    except Exception as exc:
-        print(f"{nome}: ausente ({type(exc).__name__}) — os passos que dependem dela vão falhar")
-""")
-
-md("""
-## 6. (Opcional) Teste de fumaça
-
-Roda o pipeline inteiro com imagens sintéticas e modelos minúsculos, sem API e sem baixar nada,
-em `/content/smoke`. Leva ~1–2 min e prova que o ambiente está certo antes de gastar GPU.
+Pipeline inteiro com imagens sintéticas e modelos minúsculos, sem API e sem download, em
+`/content/smoke` (~1–2 min). Prova que o ambiente está certo antes de gastar GPU.
 """)
 
 code("""
@@ -161,47 +142,32 @@ code("""
 """)
 
 md("""
-## 7. Subir as imagens
+## 6. (Opcional) Rotular e dividir aqui
 
-- **Drive (recomendado):** coloque os arquivos originais em `MyDrive/ufba-portos-captioning/data/raw/`.
-- **Upload manual:** rode a célula abaixo.
+Só se você **não** fez isso localmente. Precisa do secret `ANTHROPIC_API_KEY` (ícone 🔑 no
+navegador). No VS Code os Secrets do Colab podem não estar disponíveis — a célula pede a chave
+digitada (não fica salva no notebook).
 """)
 
 code("""
-from google.colab import files
-import shutil
+import os
+from getpass import getpass
 
-RAW = BASE / "data" / "raw"
-RAW.mkdir(parents=True, exist_ok=True)
-enviados = files.upload()
-for nome in enviados:
-    shutil.move(nome, RAW / nome)
-print(f"{len(enviados)} arquivos em {RAW}")
-""")
+try:
+    from google.colab import userdata
+    os.environ["ANTHROPIC_API_KEY"] = userdata.get("ANTHROPIC_API_KEY")
+except Exception:
+    os.environ["ANTHROPIC_API_KEY"] = getpass("ANTHROPIC_API_KEY: ")
 
-md("""
-## 8. Normalizar, rotular e dividir
-
-`prepare` corrige EXIF, reduz para 1024 px, deduplica e cria o `metadata.csv` (preencha
-`fonte`, `url`, `licenca`). `label` chama o Claude — comece com `--set labeling.limit=5`
-para ver o custo. É retomável: imagens já rotuladas são puladas.
-""")
-
-code("""
-!python -m src prepare {ARGS}
-!python -m src label {ARGS} --set labeling.limit=5
-""")
-
-code("""
 !python -m src label {ARGS}
 !python -m src split {ARGS}
 """)
 
 md("""
-## 9. Treinar as variantes
+## 7. Treinar as variantes
 
-Cada célula grava `outputs/models/<variante>/` com `train_summary.json` (parâmetros treináveis,
-VRAM de pico, tempo, losses). `finetune`, `lora` e `qlora` partem do **pré-treinado** por padrão;
+Cada célula grava `outputs/models/<variante>/` no Drive com `train_summary.json` (parâmetros
+treináveis, VRAM de pico, tempo, losses). `finetune`, `lora` e `qlora` partem do **pré-treinado**;
 para partir do base: `--set training.<estagio>.init_from=base`.
 """)
 
@@ -222,61 +188,37 @@ code("""
 !python -m src train --stage qlora {ARGS}
 """)
 
-md("""
-## 10. Gerar as legendas do teste
-
-Todas as variantes locais + o modelo gold (Gemini). Retomável.
-""")
-
 code("""
-!python -m src predict --variant all {ARGS}
-""")
-
-md("""
-## 11. Comparar
-
-Gera `results/comparativo.md` (métricas + custo de treino + exemplos) e `comparativo.csv`.
-Com menos de ~100 imagens de teste o CIDEr é instável — o `N` vai junto na tabela.
-""")
-
-code("""
-!python -m src evaluate {ARGS}
-
+import json
 import pandas as pd
-pd.read_csv(BASE / "results" / "comparativo.csv").set_index("variante").round(4)
-""")
 
-code("""
-from IPython.display import Markdown, display
-display(Markdown((BASE / "results" / "comparativo.md").read_text(encoding="utf-8")))
+linhas = []
+for v in ("pretrain", "finetune", "lora", "qlora"):
+    p = BASE / "outputs" / "models" / v / "train_summary.json"
+    if p.exists():
+        s = json.loads(p.read_text(encoding="utf-8"))
+        linhas.append({"variante": v, "treinaveis (M)": s["params_treinaveis"] / 1e6, "VRAM pico (GB)": s["vram_pico_gb"],
+                       "tempo (min)": s["tempo_s"] / 60, "melhor val loss": s["melhor_val_loss"], "quantizacao": s["quantizacao"]})
+pd.DataFrame(linhas).set_index("variante").round(3)
 """)
 
 md("""
-## 12. Olhar nas imagens (análise qualitativa)
+## 8. Exportar para a inferência local
+
+Gera `MyDrive/ufba-portos-captioning/exports/modelos.zip` (~3,5 GB com o fine-tuning completo)
+com as variantes, `labels.jsonl` e `splits.json`. Na sua máquina:
+
+```bash
+python -m src import --from <caminho do modelos.zip baixado>
+python -m src run --config configs/perfis/local_4gb.yaml
+```
+
+Com o *Google Drive para desktop* dá para apontar `--from` direto para a pasta
+`ufba-portos-captioning` sincronizada, sem baixar o zip.
 """)
 
 code("""
-from IPython.display import display
-from PIL import Image
-
-from src.common import index_by, read_json, read_jsonl
-
-QUANTAS = 5
-teste = read_json(BASE / "data" / "splits.json")["test"][:QUANTAS]
-refs = index_by(read_jsonl(BASE / "data" / "labels.jsonl"))
-preds = {p.stem.replace("preds_", ""): index_by(read_jsonl(p)) for p in sorted((BASE / "results").glob("preds_*.jsonl"))}
-
-for image_id in teste:
-    caminho = BASE / "data" / "images" / f"{image_id}.jpg"
-    if caminho.exists():
-        img = Image.open(caminho)
-        img.thumbnail((512, 512))
-        display(img)
-    print(f"{image_id}\\n  referência (Claude): {refs[image_id]['legendas'][0]}")
-    for nome, linhas in preds.items():
-        if image_id in linhas:
-            print(f"  {nome:>9}: {linhas[image_id]['legenda']}")
-    print()
+!python -m src export {ARGS}
 """)
 
 notebook = {

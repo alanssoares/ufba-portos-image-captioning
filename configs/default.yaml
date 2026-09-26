@@ -4,6 +4,7 @@
 # Precedencia: default.yaml -> --config perfil.yaml (em ordem) -> --set
 
 seed: 42
+device: null        # null = detecta (cuda > mps > cpu); force com cuda | cpu
 
 # ---------------------------------------------------------------------------
 # Caminhos (relativos a paths.root, que e relativo a raiz do repo)
@@ -17,6 +18,7 @@ paths:
   splits_json: data/splits.json     # divisao treino/validacao/teste
   models_dir: outputs/models        # uma pasta por variante (fora do git)
   results_dir: results              # predicoes, metricas e relatorio
+  exports_dir: exports              # pacote de modelos Colab -> local (fora do git)
 
 # ---------------------------------------------------------------------------
 # 1. Preparacao das imagens
@@ -187,7 +189,15 @@ evaluation:
   n_examples: 8        # exemplos qualitativos no relatorio
 
 # ---------------------------------------------------------------------------
-# 9. Pipeline completo (python -m src run)
+# 9. Transferencia Colab -> local (python -m src export / import)
+# ---------------------------------------------------------------------------
+transfer:
+  export_name: modelos.zip
+  variants: [base, pretrain, finetune, lora, qlora]
+  include_images: false   # true = leva data/images junto (se as imagens so estao no Colab)
+
+# ---------------------------------------------------------------------------
+# 10. Pipeline completo (python -m src run)
 # ---------------------------------------------------------------------------
 pipeline:
   steps:

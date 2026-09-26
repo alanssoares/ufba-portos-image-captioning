@@ -149,6 +149,14 @@ def predict_local(cfg: Config, variant: str, redo: bool = False) -> Path:
     gen = cfg.generation
     model = load_variant(variant, cfg, resolve_path(cfg, "models_dir"), device, load_4bit=bool(gen.load_4bit))
     meta = read_json(resolve_path(cfg, "models_dir") / variant / "vlm_config.json", {})
+    from .transfer import splits_sha1
+
+    treinado_com = meta.get("splits_sha1")
+    if treinado_com and treinado_com != splits_sha1(resolve_path(cfg, "splits_json")):
+        print(
+            f"  AVISO: '{variant}' foi treinado com outro splits.json — o teste local pode conter imagens "
+            "de treino. Importe o pacote do Colab (python -m src import) para alinhar."
+        )
     kwargs = dict(
         max_new_tokens=int(gen.max_new_tokens),
         num_beams=int(gen.num_beams),

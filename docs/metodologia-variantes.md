@@ -88,8 +88,8 @@ responde: *quanto do ganho do fine-tuning completo se recupera com uma fração 
 ### qlora — LoRA sobre o LLM quantizado
 
 Igual ao LoRA, mas o LLM congelado é carregado em **4 bits NF4** com dupla quantização
-(bitsandbytes). Reduz a memória do LLM de ~3,4 GB para ~1 GB — é o que permite treinar numa GPU
-local de 4 GB. Pergunta que responde: *a quantização custa qualidade?* (compare `qlora` × `lora`).
+(bitsandbytes). Reduz a memória do LLM de ~3,4 GB para ~1 GB — o treino cabe até numa T4 com
+folga, e o adaptador final ocupa poucas dezenas de MB. Pergunta que responde: *a quantização custa qualidade?* (compare `qlora` × `lora`).
 
 ### gold — o teto externo
 
@@ -111,8 +111,11 @@ parâmetros treináveis, VRAM de pico, tempo de treino e tamanho em disco.
 
 ## 5. Cuidados para a monografia
 
+- **Onde roda cada etapa**: treino no Colab, inferência na máquina local. O pacote
+  `modelos.zip` (`python -m src export` / `import`) leva junto `labels.jsonl` e `splits.json`, e cada
+  variante registra a impressão digital do split — o `predict` avisa se o teste local divergir.
 - **Quantização na inferência**: o perfil `local_4gb` carrega *todas* as variantes em 4 bits
-  para caberem na GPU. Isso muda a comparação — rode a inferência final no Colab ou declare.
+  para caberem na GPU. Isso muda a comparação — rode com `--set device=cpu` (sem quantizar) ou declare.
 - **fp16 na T4**: o Manacá foi treinado em bf16; em fp16 pode haver *overflow* (loss NaN). Se
   acontecer, `--set model.dtype=fp32`.
 - **CIDEr** usa o IDF do próprio conjunto de teste: com N < ~100 é instável.

@@ -186,8 +186,11 @@ def materialize_base(cfg: Config, out_dir: Path) -> dict:
     save_file({k: v.float().contiguous() for k, v in projector.state_dict().items()}, str(out_dir / PROJECTOR_FILE))
     load_tokenizer(cfg.model.llm_id).save_pretrained(str(out_dir / "tokenizer"))
     AutoImageProcessor.from_pretrained(resolve_model_ref(cfg.model.vision_id)).save_pretrained(str(out_dir / "image_processor"))
+    from .transfer import splits_sha1
+
     meta.update(
         variant="base",
+        splits_sha1=splits_sha1(resolve_path(cfg, "splits_json")),
         llm_weights="base",
         init_from=None,
         salvo_em=dt.datetime.now().isoformat(timespec="seconds"),
@@ -336,7 +339,15 @@ def run(cfg: Config, stage: str) -> None:
         torch.cuda.reset_peak_memory_stats()
 
     # -- metadados de saida ----------------------------------------------------
-    meta.update(variant=stage, init_from=sc.init_from, llm_mode=sc.llm_mode, vision_trained=bool(sc.train_vision))
+    from .transfer import splits_sha1
+
+    meta.update(
+        variant=stage,
+        init_from=sc.init_from,
+        llm_mode=sc.llm_mode,
+        vision_trained=bool(sc.train_vision),
+        splits_sha1=splits_sha1(resolve_path(cfg, "splits_json")),
+    )
     if sc.llm_mode in ("full", "partial"):
         meta["llm_weights"] = "full"
         meta["llm_base"] = {"kind": "local", "value": f"{stage}/llm"}
