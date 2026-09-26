@@ -1,0 +1,69 @@
+# Teste de fumaca: pipeline inteiro na CPU, sem dataset, sem GPU, sem chave de API,
+# sem baixar modelo. Usa imagens sinteticas e modelos minusculos aleatorios.
+#
+#   python -m src run --config configs/perfis/smoke.yaml
+#
+# As metricas nao significam nada: o objetivo e provar que as pecas encaixam.
+
+paths:
+  root: outputs/smoke          # isola tudo do dataset de verdade
+
+dev:
+  n_images: 30
+  tiny_dir: outputs/tiny
+
+model:
+  llm_id: outputs/tiny/llm
+  vision_id: outputs/tiny/vision
+  prompt: "descrição da imagem do porto:"
+  dtype: fp32
+
+training:
+  common:
+    epochs: 2
+    batch_size: 4
+    grad_accum: 1
+    log_every: 5
+    gradient_checkpointing: false
+    optim: adamw
+  pretrain:
+    lr: 5.0e-3
+  finetune:
+    lr: 1.0e-3
+    optim: adamw
+  lora:
+    lr: 5.0e-3
+  qlora:
+    lr: 5.0e-3
+    fallback_no_cuda: true     # na CPU vira LoRA sem quantizacao (so para teste)
+
+generation:
+  batch_size: 8
+  num_beams: 1
+  max_new_tokens: 20
+
+gold_model:
+  provider: dummy              # nao chama API
+
+evaluation:
+  bertscore: false
+  clipscore: false
+  n_examples: 3
+
+pipeline:
+  steps:
+    - tiny-models
+    - dummy-data
+    - split
+    - train:base
+    - train:pretrain
+    - train:finetune
+    - train:lora
+    - train:qlora
+    - predict:base
+    - predict:pretrain
+    - predict:finetune
+    - predict:lora
+    - predict:qlora
+    - predict:gold
+    - evaluate

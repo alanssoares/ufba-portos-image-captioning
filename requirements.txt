@@ -1,22 +1,31 @@
 # Instale o PyTorch ANTES deste arquivo, escolhendo o indice da sua CUDA:
 #   uv pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-#
-# Inferencia (modelos de captioning)
-transformers>=4.44
-accelerate>=0.33
-sentencepiece>=0.2          # tokenizador do MarianMT (traducao EN->PT)
-pillow>=10.0
-bitsandbytes>=0.43 ; platform_system != "Darwin"   # opcional: 4 bits para o Qwen2.5-VL
-timm>=1.0                   # exigido pelo codigo remoto do Florence-2
-einops>=0.8                 # idem
+# (No Colab o PyTorch ja vem instalado.)
 
-# Dataset e revisao
-streamlit>=1.36
-pandas>=2.2
-anthropic>=0.40             # rascunho de legendas + captioner de referencia
+# Configuracao
+pyyaml>=6.0
+packaging>=23.0
+
+# Modelos e treino (VLM = SigLIP + projetor + Manaca-1B)
+transformers>=4.46
+accelerate>=0.33
+peft>=0.13                  # LoRA / QLoRA
+bitsandbytes>=0.45 ; platform_system != "Darwin"   # 4 bits (QLoRA) e Adam 8 bits — exige CUDA
+safetensors>=0.4
+sentencepiece>=0.2
+tokenizers>=0.19
+pillow>=10.0
+
+# Rotulagem (Claude) e modelo gold (Gemini)
+anthropic>=0.40
+google-genai>=1.0
 
 # Avaliacao
 pycocoevalcap>=1.2          # BLEU / ROUGE-L / CIDEr (usados sem o tokenizador Java)
 bert-score>=0.3.13          # BERTScore com BERTimbau
 sentence-transformers>=3.0  # CLIPScore multilingue
 numpy>=1.26
+pandas>=2.2
+
+# Testes
+pytest>=8.0

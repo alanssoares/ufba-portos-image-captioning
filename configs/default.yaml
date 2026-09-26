@@ -1,0 +1,208 @@
+# Configuracao padrao do experimento. NAO edite para um teste pontual:
+# crie um perfil em configs/perfis/ ou use --set chave.pontilhada=valor.
+#
+# Precedencia: default.yaml -> --config perfil.yaml (em ordem) -> --set
+
+seed: 42
+
+# ---------------------------------------------------------------------------
+# Caminhos (relativos a paths.root, que e relativo a raiz do repo)
+# ---------------------------------------------------------------------------
+paths:
+  root: .
+  raw_dir: data/raw                 # imagens originais (fora do git)
+  images_dir: data/images           # normalizadas: psa_XXXX.jpg (fora do git)
+  metadata_csv: data/metadata.csv   # proveniencia e licenca (versionado)
+  labels_jsonl: data/labels.jsonl   # legendas de referencia geradas pelo Claude
+  splits_json: data/splits.json     # divisao treino/validacao/teste
+  models_dir: outputs/models        # uma pasta por variante (fora do git)
+  results_dir: results              # predicoes, metricas e relatorio
+
+# ---------------------------------------------------------------------------
+# 1. Preparacao das imagens
+# ---------------------------------------------------------------------------
+prepare:
+  max_side: 1024      # lado maior em px (0 = nao redimensiona)
+  quality: 92
+  prefix: psa         # psa = Porto de Salvador
+
+# ---------------------------------------------------------------------------
+# 2. Rotulagem: legendas de referencia com o Claude (usadas em TODOS os splits)
+# ---------------------------------------------------------------------------
+labeling:
+  provider: anthropic
+  model: claude-opus-5-5
+  api_key_env: ANTHROPIC_API_KEY
+  n_captions: 3          # legendas por imagem (multi-referencia)
+  max_tokens: 2000
+  fallbacks: true        # fallback do lado do servidor em caso de recusa
+  limit: 0               # 0 = todas as pendentes
+  max_retries: 3
+  retry_wait_s: 5
+
+# ---------------------------------------------------------------------------
+# 3. Divisao do dataset
+# ---------------------------------------------------------------------------
+split:
+  train: 0.70
+  val: 0.15
+  test: 0.15
+  seed: 42
+  exclude_out_of_domain: true   # descarta imagens marcadas fora_de_dominio pelo rotulador
+  fixed: null                   # opcional: caminho de um splits.json pronto (sobrescreve o sorteio)
+
+# ---------------------------------------------------------------------------
+# 4. Modelo: SLM PT-BR (so texto) + encoder de visao + projetor (estilo LLaVA)
+# ---------------------------------------------------------------------------
+model:
+  llm_id: menezesbruno/manaca-1b-base        # Manaca-1B (Llama, 1,7B params, PT-BR, minusculo)
+  vision_id: google/siglip-base-patch16-224  # encoder de imagem (congelado por padrao)
+  projector: mlp2x_gelu                      # linear | mlp2x_gelu
+  vision_feature_layer: -2   # camada do encoder usada como feature (-2 = penultima, como no LLaVA)
+  image_pool: 2              # pooling medio KxK na grade de patches (196 -> 49 tokens com K=2)
+  prompt: "descrição da imagem do porto:"    # texto entre a imagem e a legenda
+  max_caption_tokens: 64     # legendas maiores sao truncadas no treino
+  dtype: auto                # auto | bf16 | fp16 | fp32  (auto: bf16 se suportado, senao fp16; fp32 na CPU)
+  attn_implementation: sdpa  # sdpa | eager | flash_attention_2
+  trust_remote_code: false
+
+# ---------------------------------------------------------------------------
+# 5. Treino. Cada estagio = training.common + training.<estagio>
+#    Estagios: base (so materializa o modelo), pretrain, finetune, lora, qlora
+# ---------------------------------------------------------------------------
+training:
+  common:
+    epochs: 3
+    lr: 2.0e-4
+    batch_size: 4
+    grad_accum: 4
+    warmup_ratio: 0.05
+    weight_decay: 0.0
+    max_grad_norm: 1.0
+    optim: adamw          # adamw | adamw_8bit | paged_adamw_8bit (8 bits exige bitsandbytes + CUDA)
+    gradient_checkpointing: true
+    captions_per_image: all   # all = um exemplo por legenda | 1 = so a primeira
+    num_workers: 0
+    log_every: 10         # passos de otimizacao
+    eval_every_epoch: true
+    save: best            # best (menor loss de validacao) | last
+    max_steps: 0          # 0 = sem limite (use para testes rapidos)
+    max_train_images: 0   # 0 = todas
+    # o que treina
+    train_projector: true
+    train_vision: false
+    llm_mode: frozen      # frozen | full | partial | lora
+    unfreeze_last_n_layers: 0   # usado com llm_mode=partial
+    train_lm_head: false        # usado com llm_mode=partial
+    init_from: null       # variante de onde vem o projetor (e o LLM, se completo)
+    weights_dtype: null   # dtype dos pesos do LLM no treino. null = fp32 se o LLM treina por completo,
+                          # senao model.dtype. bf16 economiza memoria no fine-tuning completo (A100/L4).
+    save_dtype: bf16      # dtype em que o LLM completo e salvo (finetune/partial)
+    quantize_4bit: false
+    # hiperparametros do LoRA (usados com llm_mode=lora)
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+    lora_bias: none
+
+  # Variante "base": encoder + LLM originais + projetor com inicializacao aleatoria
+  # (semente fixa). E o limite inferior: o LLM nunca viu embeddings de imagem.
+  base:
+    epochs: 0
+    init_from: null
+
+  # Pre-treino adaptativo de dominio (etapa 1 do LLaVA): so o projetor aprende,
+  # encoder e LLM congelados, pares imagem-legenda do Porto.
+  pretrain:
+    epochs: 5
+    lr: 1.0e-3
+    llm_mode: frozen
+    train_projector: true
+    init_from: base
+
+  # Fine-tuning completo (etapa 2): projetor + todos os pesos do LLM.
+  finetune:
+    epochs: 3
+    lr: 2.0e-5
+    llm_mode: full
+    optim: paged_adamw_8bit
+    init_from: pretrain   # pretrain | base
+
+  lora:
+    epochs: 3
+    lr: 2.0e-4
+    llm_mode: lora
+    init_from: pretrain   # pretrain | base
+
+  qlora:
+    epochs: 3
+    lr: 2.0e-4
+    llm_mode: lora
+    init_from: pretrain   # pretrain | base
+    quantize_4bit: true
+    quant:
+      quant_type: nf4
+      double_quant: true
+      compute_dtype: auto
+    fallback_no_cuda: false  # true = sem CUDA, treina LoRA sem quantizar (so para teste)
+
+# ---------------------------------------------------------------------------
+# 6. Geracao (predicoes das variantes locais)
+# ---------------------------------------------------------------------------
+generation:
+  split: test
+  batch_size: 8
+  max_new_tokens: 48
+  num_beams: 3
+  do_sample: false
+  repetition_penalty: 1.2
+  no_repeat_ngram_size: 3
+  load_4bit: false     # true = carrega TODAS as variantes em 4 bits (GPU pequena); altera a comparacao!
+  limit: 0
+
+# ---------------------------------------------------------------------------
+# 7. "Modelo gold": VLM grande via API, avaliado contra as legendas do Claude
+# ---------------------------------------------------------------------------
+gold_model:
+  provider: gemini                 # gemini | dummy
+  model: gemini-3.1-pro-preview
+  api_key_env: GEMINI_API_KEY
+  use_domain_prompt: true          # mesmo glossario portuario dado ao rotulador
+  temperature: null                # null = padrao do provedor
+  max_output_tokens: null
+  max_retries: 3
+  retry_wait_s: 5
+
+# ---------------------------------------------------------------------------
+# 8. Comparacao
+# ---------------------------------------------------------------------------
+variants: [base, pretrain, finetune, lora, qlora, gold]
+
+evaluation:
+  split: test
+  bertscore: true
+  clipscore: true
+  device: null
+  n_examples: 8        # exemplos qualitativos no relatorio
+
+# ---------------------------------------------------------------------------
+# 9. Pipeline completo (python -m src run)
+# ---------------------------------------------------------------------------
+pipeline:
+  steps:
+    - prepare
+    - label
+    - split
+    - train:base
+    - train:pretrain
+    - train:finetune
+    - train:lora
+    - train:qlora
+    - predict:base
+    - predict:pretrain
+    - predict:finetune
+    - predict:lora
+    - predict:qlora
+    - predict:gold
+    - evaluate

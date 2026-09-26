@@ -1,4 +1,4 @@
-"""Gera notebooks/colab_pipeline.ipynb."""
+"""Gera notebooks/colab_pipeline.ipynb.  Uso: python notebooks/gerar_colab.py"""
 import json
 from pathlib import Path
 
@@ -25,42 +25,50 @@ def code(texto):
 
 
 md(f"""
-# Image Captioning PT-BR — Porto de Salvador
+# Image Captioning PT-BR — Porto de Salvador: SLM base × pré-treino × fine-tuning × LoRA × QLoRA
 
-Pipeline completo no Colab: preparar o dataset, rascunhar legendas, revisar, gerar predições
-com vários modelos e comparar por métricas.
+Este notebook roda o experimento completo no Colab:
 
-Este notebook **não duplica código**: ele clona o repositório
-[`ufba-portos-image-captioning`]({REPO.replace('.git', '')}) e chama os mesmos módulos `src/*`
-que rodam na sua máquina. Corrigiu um bug aqui? Vale lá também, e vice-versa.
+1. **rotular** as imagens com o Claude (`claude-opus-5-5`) — legendas de referência de todos os splits;
+2. **dividir** em treino / validação / teste;
+3. **treinar** as variantes do SLM (Manacá-1B + encoder SigLIP + projetor):
+   `base` → `pretrain` → `finetune` / `lora` / `qlora`;
+4. **gerar** as legendas do teste com cada variante e com o **modelo gold** (Gemini Pro, via API);
+5. **comparar** tudo por métricas (BLEU, ROUGE-L, CIDEr, BERTScore, CLIPScore) e custo de treino.
 
-**Antes de começar:** `Ambiente de execução → Alterar o tipo de ambiente de execução → GPU (T4)`.
+O notebook **não duplica código**: clona o repositório [`ufba-portos-image-captioning`]({REPO.replace('.git', '')})
+e chama `python -m src ...`, exatamente como na sua máquina. Toda escolha é parâmetro de
+`configs/default.yaml`, ajustável por perfil (`configs/perfis/*.yaml`) ou por `--set chave=valor`.
 
-A T4 tem 16 GB de VRAM — quatro vezes o que a sua GPU local tem. Aqui dá para rodar
-Florence-2-large e Qwen2.5-VL sem apertar.
+**GPU:** `Ambiente de execução → Alterar o tipo de ambiente de execução`.
+O plano Google AI Pro inclui unidades de computação do Colab — dá para escolher **L4** ou **A100**.
 
----
+| GPU | perfil | fine-tuning |
+|---|---|---|
+| T4 (15 GB) | `colab_t4` | **parcial** (últimas 8 camadas) — o completo não cabe |
+| L4 (22,5 GB) | `colab_l4` | completo (fp32 + Adam 8 bits) |
+| A100 (40 GB) | `colab_a100` | completo, com folga |
 """)
 
-md("## 1. Conferir a GPU")
+md("## 1. GPU e perfil")
 
 code("""
-!nvidia-smi
+!nvidia-smi --query-gpu=name,memory.total --format=csv
+
+import subprocess
+
+gpu = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True).stdout
+PERFIL = "colab_a100" if "A100" in gpu else "colab_l4" if "L4" in gpu else "colab_t4"
+# PERFIL = "colab_t4"   # descomente para forçar
+print("GPU:", gpu.strip() or "nenhuma", "| perfil:", PERFIL)
 """)
 
 md(f"""
-## 2. Clonar o repositório (sempre a `main`)
+## 2. Clonar o repositório (sempre a `{BRANCH}`)
 
-O notebook roda contra a **`main`** — nunca contra branch de feature. Se você está
-desenvolvendo numa branch, faça o merge antes de rodar aqui: o que o Colab executa é o que
-está publicado.
-
-Se a pasta já existir de uma execução anterior, esta célula atualiza com `git pull` em vez de
-clonar de novo.
-
-Se o repo for **privado**, o clone vai falhar. Nesse caso, compacte a pasta do projeto, faça
-upload pelo painel de arquivos do Colab e descompacte em `/content` — o resto do notebook
-funciona igual. Não coloque token do GitHub no notebook.
+Se a pasta já existir de uma execução anterior, a célula só faz `git pull`.
+Se o repo for **privado**, o clone falha: compacte a pasta do projeto, suba pelo painel de
+arquivos e descompacte em `/content`. Não coloque token do GitHub no notebook.
 """)
 
 code(f"""
@@ -80,33 +88,33 @@ else:
 """)
 
 md("""
-## 3. Instalar dependências
+## 3. Dependências
 
-O Colab já traz PyTorch, então instalamos só o resto. Se aparecer o aviso pedindo para
-reiniciar a sessão, reinicie e continue da célula 4 — o clone e o Drive continuam no lugar.
+O Colab já traz PyTorch. Se aparecer o aviso pedindo para reiniciar a sessão, reinicie e
+continue da célula 4.
 """)
 
 code("""
 !pip install -q -r requirements.txt
 
 import torch
-print("torch", torch.__version__, "| CUDA disponível:", torch.cuda.is_available())
+print("torch", torch.__version__, "| CUDA:", torch.cuda.is_available())
 """)
 
 md("""
-## 4. Onde os dados vivem (monte o Drive!)
+## 4. Onde os dados e os modelos vivem
 
-Sessão do Colab morre e leva tudo junto. Como a revisão humana das legendas é a etapa mais
-cara do projeto, os dados ficam no **Google Drive** — se a sessão cair, você recomeça sem
-perder anotação.
+Sessão do Colab morre e leva tudo junto — por isso tudo (imagens, rótulos, modelos, resultados)
+vai para o **Google Drive** por padrão. O fine-tuning completo ocupa ~3,5 GB; o resto é pequeno.
 
-Todos os scripts aceitam caminhos por flag, então basta apontá-los para o Drive.
+`ARGS` é repassado a todo comando: perfil de GPU + raiz dos caminhos. Para mudar qualquer
+parâmetro, acrescente `--set chave=valor` (ex: `--set training.lora.r=32`).
 """)
 
 code("""
 from pathlib import Path
 
-USAR_DRIVE = True  # False = tudo em /content (some quando a sessão cair)
+USAR_DRIVE = True  # False = tudo em /content/work (some quando a sessão cair)
 
 if USAR_DRIVE:
     from google.colab import drive
@@ -114,35 +122,57 @@ if USAR_DRIVE:
     BASE = Path("/content/drive/MyDrive/ufba-portos-captioning")
 else:
     BASE = Path("/content/work")
+BASE.mkdir(parents=True, exist_ok=True)
 
-RAW = BASE / "raw"                  # imagens originais que você subir
-IMAGES = BASE / "images"            # normalizadas pelo prepare_images
-MANIFEST = BASE / "metadata.csv"    # proveniência e licença
-DRAFTS = BASE / "drafts.jsonl"      # rascunhos do Claude
-CAPTIONS = BASE / "captions.jsonl"  # ground truth revisado
-RESULTS = BASE / "results"          # predições e métricas
-
-for pasta in (RAW, IMAGES, RESULTS):
-    pasta.mkdir(parents=True, exist_ok=True)
-
-print("Base:", BASE)
+ARGS = f"--config configs/perfis/{PERFIL}.yaml --set paths.root={BASE}"
+print("Raiz:", BASE)
+!python -m src show-config {ARGS} | head -40
 """)
 
 md("""
-## 5. Subir as imagens
+## 5. Chaves de API (Secrets do Colab)
 
-Duas opções:
+Crie, no ícone da chave 🔑 da barra lateral, os secrets **`ANTHROPIC_API_KEY`** (rotulagem) e
+**`GEMINI_API_KEY`** (modelo gold — gere em aistudio.google.com/apikey; a assinatura Google AI Pro
+não inclui a API, mas o AI Studio tem cota gratuita). Nunca escreva chave numa célula.
+""")
 
-- **Drive (recomendado):** jogue os arquivos direto na pasta `ufba-portos-captioning/raw`
-  do seu Drive, pelo navegador ou pelo app. Não precisa rodar a célula de upload.
-- **Upload manual:** rode a célula abaixo e escolha os arquivos (some quando a sessão cair,
-  a não ser que `USAR_DRIVE = True`).
+code("""
+import os
+from google.colab import userdata
+
+for nome in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
+    try:
+        os.environ[nome] = userdata.get(nome)
+        print(f"{nome}: carregada")
+    except Exception as exc:
+        print(f"{nome}: ausente ({type(exc).__name__}) — os passos que dependem dela vão falhar")
+""")
+
+md("""
+## 6. (Opcional) Teste de fumaça
+
+Roda o pipeline inteiro com imagens sintéticas e modelos minúsculos, sem API e sem baixar nada,
+em `/content/smoke`. Leva ~1–2 min e prova que o ambiente está certo antes de gastar GPU.
+""")
+
+code("""
+!python -m src run --config configs/perfis/smoke.yaml --set paths.root=/content/smoke --set dev.tiny_dir=/content/smoke/tiny --set model.llm_id=/content/smoke/tiny/llm --set model.vision_id=/content/smoke/tiny/vision
+""")
+
+md("""
+## 7. Subir as imagens
+
+- **Drive (recomendado):** coloque os arquivos originais em `MyDrive/ufba-portos-captioning/data/raw/`.
+- **Upload manual:** rode a célula abaixo.
 """)
 
 code("""
 from google.colab import files
 import shutil
 
+RAW = BASE / "data" / "raw"
+RAW.mkdir(parents=True, exist_ok=True)
 enviados = files.upload()
 for nome in enviados:
     shutil.move(nome, RAW / nome)
@@ -150,255 +180,117 @@ print(f"{len(enviados)} arquivos em {RAW}")
 """)
 
 md("""
-## 6. Normalizar e catalogar
+## 8. Normalizar, rotular e dividir
 
-EXIF corrigido, RGB, lado maior em 1024 px, deduplicação por SHA-1, e um manifesto com uma
-linha por imagem.
-
-**Preencha `fonte`, `url` e `licenca` no `metadata.csv`** (dá para abrir direto no Drive) —
-sem isso o dataset não é publicável nem citável na monografia.
+`prepare` corrige EXIF, reduz para 1024 px, deduplica e cria o `metadata.csv` (preencha
+`fonte`, `url`, `licenca`). `label` chama o Claude — comece com `--set labeling.limit=5`
+para ver o custo. É retomável: imagens já rotuladas são puladas.
 """)
 
 code("""
-!python -m src.prepare_images --src "{RAW}" --dst "{IMAGES}" --manifest "{MANIFEST}" --max-side 1024
+!python -m src prepare {ARGS}
+!python -m src label {ARGS} --set labeling.limit=5
+""")
+
+code("""
+!python -m src label {ARGS}
+!python -m src split {ARGS}
+""")
+
+md("""
+## 9. Treinar as variantes
+
+Cada célula grava `outputs/models/<variante>/` com `train_summary.json` (parâmetros treináveis,
+VRAM de pico, tempo, losses). `finetune`, `lora` e `qlora` partem do **pré-treinado** por padrão;
+para partir do base: `--set training.<estagio>.init_from=base`.
+""")
+
+code("""
+!python -m src train --stage base {ARGS}
+!python -m src train --stage pretrain {ARGS}
+""")
+
+code("""
+!python -m src train --stage finetune {ARGS}
+""")
+
+code("""
+!python -m src train --stage lora {ARGS}
+""")
+
+code("""
+!python -m src train --stage qlora {ARGS}
+""")
+
+md("""
+## 10. Gerar as legendas do teste
+
+Todas as variantes locais + o modelo gold (Gemini). Retomável.
+""")
+
+code("""
+!python -m src predict --variant all {ARGS}
+""")
+
+md("""
+## 11. Comparar
+
+Gera `results/comparativo.md` (métricas + custo de treino + exemplos) e `comparativo.csv`.
+Com menos de ~100 imagens de teste o CIDEr é instável — o `N` vai junto na tabela.
+""")
+
+code("""
+!python -m src evaluate {ARGS}
 
 import pandas as pd
-pd.read_csv(MANIFEST).head(10)
+pd.read_csv(BASE / "results" / "comparativo.csv").set_index("variante").round(4)
+""")
+
+code("""
+from IPython.display import Markdown, display
+display(Markdown((BASE / "results" / "comparativo.md").read_text(encoding="utf-8")))
 """)
 
 md("""
-## 7. Rascunhar legendas com o Claude
-
-A chave vem dos **Secrets do Colab** (ícone da chave 🔑 na barra lateral): crie um secret
-chamado `ANTHROPIC_API_KEY` e ative o acesso para este notebook. Nunca escreva a chave numa
-célula — o notebook vai para o Git com o que estiver escrito nele.
-
-Comece com `--limit 5` para ver o custo antes de rodar no dataset inteiro.
-""")
-
-code("""
-import os
-from google.colab import userdata
-
-os.environ["ANTHROPIC_API_KEY"] = userdata.get("ANTHROPIC_API_KEY")
-print("Chave carregada dos Secrets do Colab.")
-""")
-
-code("""
-!python -m src.draft_captions --images "{IMAGES}" --out "{DRAFTS}" --limit 5
-""")
-
-md("""
-## 8. Revisar (a etapa que gera o dado de verdade)
-
-O app Streamlit do repo não roda bem no Colab (precisaria de túnel), então aqui vai um
-revisor mínimo em ipywidgets. Ele escreve **no mesmo formato** do `captions.jsonl`, então
-você pode revisar parte aqui, parte no app local, sem conflito.
-
-Legenda revisada por humano é o que separa um dataset de um monte de saída de LLM.
-""")
-
-code("""
-import datetime as dt
-
-import ipywidgets as widgets
-from IPython.display import display, clear_output
-from PIL import Image
-
-from src.common import index_by, list_images, read_jsonl, write_jsonl
-
-N_LEGENDAS = 3
-imagens = list_images(IMAGES)
-rascunhos = index_by(read_jsonl(DRAFTS))
-estado = {"i": 0}
-
-
-def salvar(image_id, legendas, objetos, descartada):
-    final = index_by(read_jsonl(CAPTIONS))
-    final[image_id] = {
-        "image_id": image_id,
-        "legendas": [t.strip() for t in legendas if t.strip()],
-        "objetos": [o.strip().lower() for o in objetos.split(",") if o.strip()],
-        "observacao": "",
-        "descartada": bool(descartada),
-        "revisor": "colab",
-        "revisado_em": dt.datetime.now().isoformat(timespec="seconds"),
-        "origem_rascunho": rascunhos.get(image_id, {}).get("modelo", ""),
-    }
-    write_jsonl(CAPTIONS, [final[k] for k in sorted(final)])
-
-
-def mostrar():
-    clear_output(wait=True)
-    if not imagens:
-        print(f"Nenhuma imagem em {IMAGES}.")
-        return
-    estado["i"] %= len(imagens)
-    path = imagens[estado["i"]]
-    image_id = path.stem
-    final = index_by(read_jsonl(CAPTIONS))
-    base = (final.get(image_id) or rascunhos.get(image_id) or {}).get("legendas", [])
-    revisadas = sum(1 for p in imagens if p.stem in final)
-
-    display(Image.open(path).copy())
-    print(f"{image_id}  ({estado['i'] + 1}/{len(imagens)})  —  {revisadas} já revisadas")
-
-    campos = [
-        widgets.Textarea(value=base[i] if i < len(base) else "", layout=widgets.Layout(width="90%", height="60px"))
-        for i in range(N_LEGENDAS)
-    ]
-    objetos = widgets.Text(
-        value=", ".join((final.get(image_id) or rascunhos.get(image_id) or {}).get("objetos", [])),
-        description="objetos:",
-        layout=widgets.Layout(width="90%"),
-    )
-    descartar = widgets.Checkbox(value=False, description="descartar (fora do domínio)")
-    b_salvar = widgets.Button(description="Salvar e próxima", button_style="primary")
-    b_pular = widgets.Button(description="Pular")
-    b_voltar = widgets.Button(description="Voltar")
-
-    def ao_salvar(_):
-        salvar(image_id, [c.value for c in campos], objetos.value, descartar.value)
-        estado["i"] += 1
-        mostrar()
-
-    b_salvar.on_click(ao_salvar)
-    b_pular.on_click(lambda _: (estado.update(i=estado["i"] + 1), mostrar()))
-    b_voltar.on_click(lambda _: (estado.update(i=estado["i"] - 1), mostrar()))
-
-    display(widgets.VBox(campos + [objetos, descartar, widgets.HBox([b_voltar, b_pular, b_salvar])]))
-
-
-mostrar()
-""")
-
-md("""
-## 9. Gerar as predições
-
-Na T4 dá para rodar todos. `--translate` é obrigatório nos modelos que só legendam em inglês
-(BLIP e Florence-2) — sem ele a legenda em português fica vazia e a avaliação ignora a linha.
-
-| modelo | o que é | idioma |
-|---|---|---|
-| `blip` | baseline encoder-decoder clássico | EN → traduzido |
-| `florence2` | Florence-2, task `<MORE_DETAILED_CAPTION>` | EN → traduzido |
-| `qwen25vl` | Qwen2.5-VL-3B (4 bits) | PT-BR direto |
-| `claude` | VLM via API — teto de qualidade | PT-BR direto |
-""")
-
-code("""
-!python -m src.run_captioning --model blip --images "{IMAGES}" --out "{RESULTS}/preds_blip.jsonl" --translate
-""")
-
-code("""
-!python -m src.run_captioning --model florence2 --images "{IMAGES}" --out "{RESULTS}/preds_florence2.jsonl" --translate
-""")
-
-code("""
-!python -m src.run_captioning --model qwen25vl --images "{IMAGES}" --out "{RESULTS}/preds_qwen25vl.jsonl"
-""")
-
-code("""
-!python -m src.run_captioning --model claude --images "{IMAGES}" --out "{RESULTS}/preds_claude.jsonl"
-""")
-
-md("""
-## 10. Avaliar e comparar
-
-BLEU / ROUGE-L / CIDEr (sem Java), BERTScore com BERTimbau, CLIPScore e RefCLIPScore
-multilíngues, mais diversidade lexical.
-
-Lembre do `N`: com menos de ~100 imagens o CIDEr é instável, porque calcula o IDF a partir
-do próprio conjunto avaliado.
-""")
-
-code("""
-!python -m src.evaluate --preds "{RESULTS}/preds_*.jsonl" --refs "{CAPTIONS}" --images "{IMAGES}" --out "{RESULTS}/comparativo.md"
-""")
-
-code("""
-import json
-
-import pandas as pd
-
-metricas = [json.load(open(p, encoding="utf-8")) for p in sorted(RESULTS.glob("metrics_*.json"))]
-pd.DataFrame(metricas).set_index("modelo").drop(columns=["arquivo"], errors="ignore").round(4)
-""")
-
-md("""
-## 11. Olhar nos resultados (análise qualitativa)
-
-A tabela diz *quanto* cada modelo erra; esta célula mostra *como* — é daqui que sai a
-discussão sobre o gap de domínio, com exemplos de legenda genérica ("um barco grande perto
-de um prédio") contra o vocabulário técnico das referências.
+## 12. Olhar nas imagens (análise qualitativa)
 """)
 
 code("""
 from IPython.display import display
 from PIL import Image
 
-from src.common import index_by, read_jsonl
+from src.common import index_by, read_json, read_jsonl
 
 QUANTAS = 5
+teste = read_json(BASE / "data" / "splits.json")["test"][:QUANTAS]
+refs = index_by(read_jsonl(BASE / "data" / "labels.jsonl"))
+preds = {p.stem.replace("preds_", ""): index_by(read_jsonl(p)) for p in sorted((BASE / "results").glob("preds_*.jsonl"))}
 
-refs = {r["image_id"]: r for r in read_jsonl(CAPTIONS) if not r.get("descartada")}
-preds = {p.stem.replace("preds_", ""): index_by(read_jsonl(p)) for p in sorted(RESULTS.glob("preds_*.jsonl"))}
-
-for image_id in list(refs)[:QUANTAS]:
-    caminho = IMAGES / f"{image_id}.jpg"
+for image_id in teste:
+    caminho = BASE / "data" / "images" / f"{image_id}.jpg"
     if caminho.exists():
-        foto = Image.open(caminho)
-        foto.thumbnail((420, 420))
-        display(foto)
-    print(f"=== {image_id} ===")
-    print(f"  [referência] {refs[image_id]['legendas'][0]}")
-    for modelo, linhas in preds.items():
-        legenda = linhas.get(image_id, {}).get("legenda", "—")
-        print(f"  [{modelo}] {legenda}")
+        img = Image.open(caminho)
+        img.thumbnail((512, 512))
+        display(img)
+    print(f"{image_id}\\n  referência (Claude): {refs[image_id]['legendas'][0]}")
+    for nome, linhas in preds.items():
+        if image_id in linhas:
+            print(f"  {nome:>9}: {linhas[image_id]['legenda']}")
     print()
 """)
 
-md("""
-## 12. Levar os resultados embora
-
-Com `USAR_DRIVE = True` tudo já está salvo no Drive — não precisa fazer nada. A célula
-abaixo é só para baixar o comparativo direto para a máquina.
-""")
-
-code("""
-from google.colab import files
-
-files.download(str(RESULTS / "comparativo.md"))
-""")
-
-md("""
----
-
-## Notas
-
-- **Custo de sessão:** a T4 gratuita desconecta por inatividade e tem cota diária. Rode as
-  etapas caras (predições) em blocos, com os dados no Drive.
-- **Fine-tuning:** este notebook cobre só inferência e avaliação, igual ao repo. LoRA no BLIP
-  caberia na T4 e seria o passo natural depois de ter o dataset revisado — mas é implementação
-  nova, não está aqui.
-- **Divergência com o local:** se você mudar `src/*` aqui dentro do Colab, a mudança morre com
-  a sessão — e a célula 2 vai reclamar do `git pull` num diretório sujo. Edite no repo, faça
-  commit, merge na `main`, e reexecute a célula 2.
-""")
-
 notebook = {
+    "cells": cells,
+    "metadata": {
+        "accelerator": "GPU",
+        "colab": {"gpuType": "L4", "provenance": []},
+        "kernelspec": {"display_name": "Python 3", "name": "python3"},
+        "language_info": {"name": "python"},
+    },
     "nbformat": 4,
     "nbformat_minor": 0,
-    "metadata": {
-        "colab": {"provenance": [], "toc_visible": True, "name": "colab_pipeline.ipynb"},
-        "kernelspec": {"name": "python3", "display_name": "Python 3"},
-        "language_info": {"name": "python"},
-        "accelerator": "GPU",
-    },
-    "cells": cells,
 }
 
-destino = Path("notebooks/colab_pipeline.ipynb")
-destino.parent.mkdir(parents=True, exist_ok=True)
-destino.write_text(json.dumps(notebook, ensure_ascii=False, indent=1), encoding="utf-8")
-print(f"{destino}: {len(cells)} células")
+destino = Path(__file__).with_name("colab_pipeline.ipynb")
+destino.write_text(json.dumps(notebook, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+print(f"{destino} gerado com {len(cells)} celulas.")
