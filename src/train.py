@@ -1,11 +1,11 @@
-"""Treino das variantes: base, pretrain, finetune, lora, qlora.
+"""Treino das variantes: base, pretrain, finetune, lora, qlora (rode no Colab).
 
 Uso:
-    python -m src train --stage base        # so materializa o modelo base (projetor aleatorio)
-    python -m src train --stage pretrain    # pre-treino adaptativo de dominio (so o projetor)
-    python -m src train --stage finetune    # fine-tuning completo (projetor + LLM inteiro)
-    python -m src train --stage lora        # LoRA no LLM + projetor
-    python -m src train --stage qlora       # LLM em 4 bits (NF4) + LoRA + projetor
+    python -m src train --stage base        # so registra o modelo original (nada e treinado)
+    python -m src train --stage pretrain    # pre-treino continuado de dominio: so o conector visao->LLM
+    python -m src train --stage finetune    # fine-tuning completo: conector + LLM inteiro
+    python -m src train --stage lora        # LoRA no LLM + conector
+    python -m src train --stage qlora       # LLM em 4 bits (NF4) + LoRA + conector
 
     # ponto de partida: pre-treinado (padrao) ou base
     python -m src train --stage lora --set training.lora.init_from=base
@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-from contextlib import nullcontext as _nada
 import time
+from contextlib import nullcontext as _nada
 from pathlib import Path
 
 from .common import append_jsonl, find_image, index_by, pick_device, read_jsonl, set_seed, write_json
@@ -54,11 +54,7 @@ def build_samples(cfg: Config, split: str, per_image: str | int, max_images: int
 
 
 class Collate:
-    """Abre as imagens e aplica o processador do encoder. Classe (e nao closure) para
-    funcionar com num_workers > 0 no Windows, onde os workers sao criados por spawn."""
-
-    def __init__(self, processor) -> None:
-        self.processor = processor
+    """Abre as imagens. Classe (e nao closure) para funcionar com num_workers > 0 no Windows."""
 
     def __call__(self, batch):
         from PIL import Image
@@ -67,23 +63,15 @@ class Collate:
         for caminho, _ in batch:
             with Image.open(caminho) as img:
                 imagens.append(img.convert("RGB"))
-        pixel_values = self.processor(images=imagens, return_tensors="pt")["pixel_values"]
-        return pixel_values, [legenda for _, legenda in batch]
+        return imagens, [legenda for _, legenda in batch]
 
 
-def make_loader(samples, model, batch_size: int, shuffle: bool, num_workers: int, seed: int):
+def make_loader(samples, batch_size: int, shuffle: bool, num_workers: int, seed: int):
     import torch
     from torch.utils.data import DataLoader
 
     gen = torch.Generator().manual_seed(seed)
-    return DataLoader(
-        samples,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        collate_fn=Collate(model.image_processor),
-        generator=gen,
-    )
+    return DataLoader(samples, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, collate_fn=Collate(), generator=gen)
 
 
 # ---------------------------------------------------------------------------
@@ -105,45 +93,50 @@ def make_optimizer(name: str, params, lr: float, weight_decay: float, device: st
     return torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
 
 
-def configure_trainable(model, sc: Config, quantized: bool) -> None:
+def _casa(nome: str, padroes) -> bool:
+    return any(p in nome for p in padroes)
+
+
+def configure_trainable(model, sc: Config, quantized: bool):
+    """Congela tudo e libera o que o estagio treina. Devolve o modelo (pode virar PeftModel)."""
+    from .vlm import language_model
+
     for p in model.parameters():
         p.requires_grad_(False)
 
     modo = sc.llm_mode
     if modo == "full":
-        for p in model.llm.parameters():
+        for p in language_model(model).parameters():
             p.requires_grad_(True)
     elif modo == "partial":
         n = int(sc.unfreeze_last_n_layers)
         if n <= 0:
             raise SystemExit("llm_mode=partial exige unfreeze_last_n_layers > 0")
-        corpo = model.llm.model
-        for camada in corpo.layers[-n:]:
+        lm = language_model(model)
+        for camada in lm.layers[-n:]:
             for p in camada.parameters():
                 p.requires_grad_(True)
-        for p in corpo.norm.parameters():
+        for p in lm.norm.parameters():
             p.requires_grad_(True)
-        if sc.train_lm_head:
-            for p in model.llm.lm_head.parameters():
-                p.requires_grad_(True)
     elif modo == "lora":
         from peft import LoraConfig, get_peft_model
 
         if quantized:
             from peft import prepare_model_for_kbit_training
 
-            model.llm = prepare_model_for_kbit_training(
-                model.llm,
+            model = prepare_model_for_kbit_training(
+                model,
                 use_gradient_checkpointing=bool(sc.gradient_checkpointing),
                 gradient_checkpointing_kwargs={"use_reentrant": False},
             )
-        model.llm = get_peft_model(
-            model.llm,
+        alvos = sc.target_modules
+        model = get_peft_model(
+            model,
             LoraConfig(
                 r=int(sc.r),
                 lora_alpha=int(sc.alpha),
                 lora_dropout=float(sc.dropout),
-                target_modules=list(sc.target_modules),
+                target_modules=alvos if isinstance(alvos, str) else list(alvos),
                 bias=sc.get("lora_bias", "none"),
                 task_type="CAUSAL_LM",
             ),
@@ -151,74 +144,49 @@ def configure_trainable(model, sc: Config, quantized: bool) -> None:
     elif modo != "frozen":
         raise SystemExit(f"llm_mode desconhecido '{modo}'. Use frozen | full | partial | lora")
 
-    if sc.train_projector:
-        for p in model.projector.parameters():
+    # conector visao->LLM e, opcionalmente, o encoder de visao inteiro
+    for nome, p in model.named_parameters():
+        if "lora_" in nome:
+            continue
+        if sc.train_connector and _casa(nome, sc.connector_modules):
             p.requires_grad_(True)
-    if sc.train_vision:
-        model.train_vision = True
-        for p in model.vision.parameters():
+        if sc.train_vision and ".visual." in f".{nome}":
             p.requires_grad_(True)
 
     if sc.gradient_checkpointing:
-        model.llm.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-    model.llm.config.use_cache = False
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+    model.config.use_cache = False
+    return model
 
 
-# ---------------------------------------------------------------------------
-# materializacao sem carregar pesos (variante base)
-# ---------------------------------------------------------------------------
-def materialize_base(cfg: Config, out_dir: Path) -> dict:
-    """Projetor aleatorio (semente fixa) + referencias aos pesos originais — nao carrega o LLM."""
-    import torch
-    from safetensors.torch import save_file
-    from transformers import AutoConfig, AutoImageProcessor
+def trained_delta_keys(model) -> list[str]:
+    """Nomes (no modelo original, sem prefixo PEFT) dos pesos treinaveis que NAO sao LoRA."""
+    from .vlm import unwrap
 
-    from .vlm import PROJECTOR_FILE, VLM_CONFIG, base_meta, build_projector, load_tokenizer, resolve_model_ref
-
-    meta = base_meta(cfg)
-    vconf = AutoConfig.from_pretrained(resolve_model_ref(cfg.model.vision_id))
-    lconf = AutoConfig.from_pretrained(resolve_model_ref(cfg.model.llm_id))
-    d_vis = getattr(vconf, "vision_config", vconf).hidden_size
-    torch.manual_seed(int(cfg.seed))
-    projector = build_projector(cfg.model.projector, d_vis, lconf.hidden_size)
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    save_file({k: v.float().contiguous() for k, v in projector.state_dict().items()}, str(out_dir / PROJECTOR_FILE))
-    load_tokenizer(cfg.model.llm_id).save_pretrained(str(out_dir / "tokenizer"))
-    AutoImageProcessor.from_pretrained(resolve_model_ref(cfg.model.vision_id)).save_pretrained(str(out_dir / "image_processor"))
-    from .transfer import splits_sha1
-
-    meta.update(
-        variant="base",
-        splits_sha1=splits_sha1(resolve_path(cfg, "splits_json")),
-        llm_weights="base",
-        init_from=None,
-        salvo_em=dt.datetime.now().isoformat(timespec="seconds"),
-    )
-    write_json(out_dir / VLM_CONFIG, meta)
-    return meta
+    base = unwrap(model)
+    return [n for n, p in base.named_parameters() if p.requires_grad and "lora_" not in n]
 
 
 # ---------------------------------------------------------------------------
 # treino
 # ---------------------------------------------------------------------------
-def validation_loss(model, loader, device: str, amp_dtype, use_amp: bool) -> float | None:
+def validation_loss(cap, loader, device: str, amp_dtype, use_amp: bool) -> float | None:
     import torch
 
     if loader is None or len(loader) == 0:
         return None
-    model.eval()
+    cap.model.eval()
     total, n = 0.0, 0
     with torch.no_grad():
-        for pixel_values, legendas in loader:
+        for imagens, legendas in loader:
             ctx = torch.autocast(device_type="cuda", dtype=amp_dtype) if use_amp else _nada()
             with ctx:
-                loss = model(pixel_values.to(device), legendas).loss
+                loss = cap.loss(imagens, legendas, device)
             total += float(loss) * len(legendas)
             n += len(legendas)
-    model.train()
-    if not model.train_vision:
-        model.vision.eval()
+    cap.model.train()
     return total / max(n, 1)
 
 
@@ -226,44 +194,41 @@ def run(cfg: Config, stage: str) -> None:
     if stage not in STAGES:
         raise SystemExit(f"estagio desconhecido '{stage}'. Use um de: {', '.join(STAGES)}")
 
-    import torch
-    from transformers import get_cosine_schedule_with_warmup
-
-    from .vlm import (
-        assemble,
-        base_meta,
-        count_params,
-        load_projector_state,
-        read_meta,
-        resolve_dtype,
-        save_variant,
-    )
+    from .transfer import splits_sha1
+    from .vlm import base_meta, write_meta
 
     sc = stage_config(cfg, stage)
     set_seed(int(cfg.seed))
     models_dir = resolve_path(cfg, "models_dir")
     out_dir = models_dir / stage
-    device = pick_device(cfg.get("device"))
-    inicio = time.perf_counter()
+    fingerprint = splits_sha1(resolve_path(cfg, "splits_json"))
 
     if stage == "base" or (int(sc.epochs) == 0 and not sc.init_from):
-        meta = materialize_base(cfg, out_dir)
-        write_json(out_dir / "train_summary.json", {"stage": stage, "epochs": 0, "nota": "sem treino", "meta": meta})
-        print(f"Variante '{stage}' materializada em {out_dir} (projetor aleatorio, semente {cfg.seed}).")
+        meta = {**base_meta(cfg), "variant": stage, "weights": "base", "init_from": None, "splits_sha1": fingerprint}
+        write_meta(out_dir, meta)
+        write_json(out_dir / "train_summary.json", {"stage": stage, "epochs": 0, "nota": "modelo original, sem treino", "meta": meta})
+        print(f"Variante '{stage}' registrada em {out_dir}: {cfg.model.model_id} sem treino.")
         return
+
+    import torch
+    from transformers import get_cosine_schedule_with_warmup
+
+    from .vlm import Captioner, apply_delta, count_params, load_model, load_processor, read_meta, ref_path, resolve_dtype, save_variant
+
+    device = pick_device(cfg.get("device"))
+    inicio = time.perf_counter()
 
     # -- precisao --------------------------------------------------------------
     compute_dtype = resolve_dtype(cfg.model.dtype, device)
     use_amp = device == "cuda" and compute_dtype != torch.float32
     if device != "cuda":
-        llm_dtype = torch.float32
+        model_dtype = torch.float32
     elif sc.get("weights_dtype"):
-        llm_dtype = resolve_dtype(sc.weights_dtype, device)
+        model_dtype = resolve_dtype(sc.weights_dtype, device)
     elif sc.llm_mode in ("full", "partial"):
-        llm_dtype = torch.float32
+        model_dtype = torch.float32
     else:
-        llm_dtype = compute_dtype
-    vision_dtype = torch.float32 if (sc.train_vision or device != "cuda") else compute_dtype
+        model_dtype = compute_dtype
 
     quant = None
     nota_quant = "nenhuma"
@@ -276,95 +241,86 @@ def run(cfg: Config, stage: str) -> None:
             print(f"  AVISO: sem CUDA — '{stage}' vai treinar SEM quantizacao (fallback_no_cuda=true).")
         else:
             raise SystemExit(
-                f"'{stage}' usa 4 bits (bitsandbytes), que exige GPU CUDA. Para testar sem GPU use "
-                f"--set training.{stage}.fallback_no_cuda=true (o resultado NAO e quantizado de verdade)."
+                f"'{stage}' usa 4 bits (bitsandbytes), que exige GPU CUDA. Rode no Colab "
+                f"(ou --set training.{stage}.fallback_no_cuda=true so para teste)."
             )
 
     # -- ponto de partida ------------------------------------------------------
     meta = base_meta(cfg)
-    projector_state = None
+    herdadas: list[str] = []
+    origem = None
     if sc.init_from:
         origem = models_dir / sc.init_from
         meta_origem = read_meta(origem)
         if meta_origem.get("adapter"):
-            raise SystemExit(f"init_from={sc.init_from} e uma variante com adaptador; use pretrain, base ou finetune.")
-        for chave in ("llm_base", "vision_source", "projector", "image_pool", "vision_feature_layer", "prompt", "max_caption_tokens"):
-            if chave in meta_origem and meta_origem[chave] != meta.get(chave) and chave not in ("llm_base", "vision_source"):
-                print(f"  (usando {chave}={meta_origem[chave]!r} de '{sc.init_from}' em vez do valor da config)")
-            meta[chave] = meta_origem.get(chave, meta.get(chave))
-        projector_state = load_projector_state(origem)
+            raise SystemExit(f"init_from={sc.init_from} tem adaptador LoRA; use base, pretrain ou finetune.")
+        for chave in ("base_ref", "instruction", "system_prompt", "response_marker", "response_suffix", "image_max_side"):
+            if chave in meta_origem:
+                if chave != "base_ref" and meta_origem[chave] != meta.get(chave):
+                    print(f"  (usando {chave}={meta_origem[chave]!r} de '{sc.init_from}' em vez do valor da config)")
+                meta[chave] = meta_origem[chave]
 
-    print(f"Estagio '{stage}' | dispositivo {device} | LLM {llm_dtype} | amp {compute_dtype if use_amp else 'off'} | quantizacao {nota_quant}")
-    print(f"  ponto de partida: {sc.init_from or 'pesos originais'} | llm_mode={sc.llm_mode}")
+    base_ref = ref_path(meta["base_ref"], models_dir)
+    print(f"Estagio '{stage}' | {device} | pesos {model_dtype} | amp {compute_dtype if use_amp else 'off'} | quantizacao {nota_quant}")
+    print(f"  ponto de partida: {sc.init_from or 'modelo original'} ({base_ref}) | llm_mode={sc.llm_mode}")
 
-    model = assemble(
-        meta,
-        models_dir,
-        device,
-        llm_dtype=llm_dtype,
-        vision_dtype=vision_dtype,
-        attn=cfg.model.attn_implementation,
-        quant=quant,
-        projector_state=projector_state,
-        projector_dtype=torch.float32,
-        seed=int(cfg.seed),
-    )
-    configure_trainable(model, sc, quantized=quant is not None)
+    model = load_model(base_ref, model_dtype, device, cfg.model.attn_implementation, quant)
+    if origem is not None:
+        herdadas = apply_delta(model, origem)
+    processor = load_processor(str(origem / "processor") if origem is not None and (origem / "processor").exists() else base_ref)
+
+    model = configure_trainable(model, sc, quantized=quant is not None)
+    # pesos treinaveis em fp32 (estabilidade + GradScaler), exceto se o usuario pediu bf16 explicito
+    if device == "cuda" and sc.get("weights_dtype") != "bf16":
+        for p in model.parameters():
+            if p.requires_grad and p.dtype in (torch.float16, torch.bfloat16):
+                p.data = p.data.float()
+    cap = Captioner(model, processor, meta)
     total_params, treinaveis = count_params(model)
     print(f"  parametros: {total_params / 1e6:.1f} M total, {treinaveis / 1e6:.2f} M treinaveis ({100 * treinaveis / total_params:.2f}%)")
+    if treinaveis == 0:
+        raise SystemExit("Nada para treinar — confira llm_mode, train_connector e connector_modules.")
 
     # -- dados ---------------------------------------------------------------
-    per_image = sc.captions_per_image
-    treino = build_samples(cfg, "train", per_image, int(sc.max_train_images))
-    valid = build_samples(cfg, "val", per_image)
+    treino = build_samples(cfg, "train", sc.captions_per_image, int(sc.max_train_images))
+    valid = build_samples(cfg, "val", sc.captions_per_image)
     if not treino:
-        raise SystemExit("Nenhum exemplo de treino. Rode `label` e `split` antes.")
+        raise SystemExit("Nenhum exemplo de treino. Rode `label` e `split` antes (e confira data/images).")
     bs = int(sc.batch_size)
-    loader = make_loader(treino, model, bs, True, int(sc.num_workers), int(cfg.seed))
-    val_loader = make_loader(valid, model, bs, False, int(sc.num_workers), int(cfg.seed)) if valid else None
+    loader = make_loader(treino, bs, True, int(sc.num_workers), int(cfg.seed))
+    val_loader = make_loader(valid, bs, False, int(sc.num_workers), int(cfg.seed)) if valid else None
     print(f"  exemplos: {len(treino)} treino, {len(valid)} validacao | batch {bs} x acumulacao {sc.grad_accum}")
 
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = make_optimizer(sc.optim, params, float(sc.lr), float(sc.weight_decay), device)
     accum = max(1, int(sc.grad_accum))
-    passos_epoca = math.ceil(len(loader) / accum)
-    total_passos = passos_epoca * int(sc.epochs)
+    total_passos = math.ceil(len(loader) / accum) * int(sc.epochs)
     if int(sc.max_steps):
         total_passos = min(total_passos, int(sc.max_steps))
     scheduler = get_cosine_schedule_with_warmup(optimizer, int(float(sc.warmup_ratio) * total_passos), max(total_passos, 1))
     todos_fp32 = all(p.dtype == torch.float32 for p in params)
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp and compute_dtype == torch.float16 and todos_fp32)
-
     if device == "cuda":
         torch.cuda.reset_peak_memory_stats()
 
     # -- metadados de saida ----------------------------------------------------
-    from .transfer import splits_sha1
-
-    meta.update(
-        variant=stage,
-        init_from=sc.init_from,
-        llm_mode=sc.llm_mode,
-        vision_trained=bool(sc.train_vision),
-        splits_sha1=splits_sha1(resolve_path(cfg, "splits_json")),
-    )
+    meta.update(variant=stage, init_from=sc.init_from, llm_mode=sc.llm_mode, splits_sha1=fingerprint)
     if sc.llm_mode in ("full", "partial"):
-        meta["llm_weights"] = "full"
-        meta["llm_base"] = {"kind": "local", "value": f"{stage}/llm"}
-    elif sc.llm_mode == "lora":
-        meta["llm_weights"] = "adapter"
-        meta["adapter"] = True
+        meta["weights"] = "full"
+        meta["base_ref"] = {"kind": "local", "value": f"{stage}/model"}
+        delta_keys: list[str] = []
+    else:
+        meta["weights"] = "delta"
+        meta["adapter"] = sc.llm_mode == "lora"
         meta["adapter_quantized_base"] = quant is not None
-    if sc.train_vision:
-        meta["vision_source"] = {"kind": "local", "value": f"{stage}/vision"}
+        delta_keys = sorted(set(herdadas) | set(trained_delta_keys(model)))
     save_dtype = resolve_dtype(sc.get("save_dtype", "bf16"), "cuda") if device == "cuda" else torch.float32
 
-    log_path = out_dir / "train_log.jsonl"
     out_dir.mkdir(parents=True, exist_ok=True)
+    log_path = out_dir / "train_log.jsonl"
     log_path.write_text("", encoding="utf-8")
 
     model.train()
-    model.vision.eval()
     passo = 0
     melhor = math.inf
     historico = []
@@ -373,10 +329,10 @@ def run(cfg: Config, stage: str) -> None:
     for epoca in range(1, int(sc.epochs) + 1):
         acumulado, n_micro = 0.0, 0
         optimizer.zero_grad(set_to_none=True)
-        for i, (pixel_values, legendas) in enumerate(loader):
+        for i, (imagens, legendas) in enumerate(loader):
             ctx = torch.autocast(device_type="cuda", dtype=compute_dtype) if use_amp else _nada()
             with ctx:
-                loss = model(pixel_values.to(device), legendas).loss / accum
+                loss = cap.loss(imagens, legendas, device) / accum
             scaler.scale(loss).backward()
             acumulado += float(loss) * accum
             n_micro += 1
@@ -399,30 +355,30 @@ def run(cfg: Config, stage: str) -> None:
                     parar = True
                     break
 
-        val = validation_loss(model, val_loader, device, compute_dtype, use_amp) if sc.eval_every_epoch else None
+        val = validation_loss(cap, val_loader, device, compute_dtype, use_amp) if sc.eval_every_epoch else None
         historico.append({"epoca": epoca, "train_loss": ultima_loss, "val_loss": val})
         append_jsonl(log_path, {"epoca": epoca, "fim_epoca": True, "train_loss": ultima_loss, "val_loss": val})
         print(f"  == epoca {epoca}: train {ultima_loss:.4f} | val {val if val is None else round(val, 4)}")
 
-        if sc.save == "best" and val is not None:
-            if val < melhor:
-                melhor = val
-                save_variant(model, out_dir, meta, save_dtype)
-                print(f"     melhor validacao ate agora — salvo em {out_dir}")
+        if sc.save == "best" and val is not None and val < melhor:
+            melhor = val
+            save_variant(cap, out_dir, meta, delta_keys, save_dtype)
+            print(f"     melhor validacao ate agora — salvo em {out_dir}")
         if parar:
             break
 
     if sc.save != "best" or melhor == math.inf:
-        save_variant(model, out_dir, meta, save_dtype)
+        save_variant(cap, out_dir, meta, delta_keys, save_dtype)
 
     resumo = {
         "stage": stage,
+        "modelo": cfg.model.model_id,
         "init_from": sc.init_from,
         "llm_mode": sc.llm_mode,
         "quantizacao": nota_quant,
         "dispositivo": device,
         "gpu": torch.cuda.get_device_name() if device == "cuda" else None,
-        "llm_dtype_treino": str(llm_dtype),
+        "pesos_dtype_treino": str(model_dtype),
         "amp": str(compute_dtype) if use_amp else None,
         "params_total": total_params,
         "params_treinaveis": treinaveis,

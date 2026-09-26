@@ -1,6 +1,6 @@
-# Colab com GPU L4 (22,5 GB, bf16 nativo). Fine-tuning completo com pesos fp32 +
-# Adam 8 bits paginado + gradient checkpointing (~20 GB de pico esperado).
-# Se estourar memoria: --set training.finetune.weights_dtype=bf16 (pesos em bf16, ~11 GB).
+# Colab com GPU L4 (22,5 GB, bf16 nativo). Fine-tuning completo com pesos em bf16 +
+# Adam 8 bits paginado + gradient checkpointing (~12 GB de pico esperado). Pesos em fp32
+# (~19 GB so de pesos/gradientes/otimizador) nao cabem com folga — para fp32, use a A100.
 
 model:
   dtype: bf16
@@ -13,6 +13,7 @@ training:
     num_workers: 2
   finetune:
     llm_mode: full
+    weights_dtype: bf16
     optim: paged_adamw_8bit
     batch_size: 2
     grad_accum: 8

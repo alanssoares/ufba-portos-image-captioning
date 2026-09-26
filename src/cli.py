@@ -12,7 +12,6 @@ Comandos:
     export        empacota modelos treinados + labels + splits (Colab -> local)
     import        instala um pacote exportado (--from zip ou pasta)
     dummy-data    imagens e rotulos sinteticos (teste sem dataset)
-    tiny-models   modelos minusculos aleatorios (teste sem GPU/download)
 
 Exemplos:
     python -m src run --config configs/perfis/smoke.yaml
@@ -39,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m src", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    for nome in ("prepare", "show-config", "dummy-data", "tiny-models"):
+    for nome in ("prepare", "show-config", "dummy-data"):
         _add_common(sub.add_parser(nome))
 
     p = sub.add_parser("label")
@@ -116,10 +115,6 @@ def execute_step(cfg: Config, step: str, redo: bool = False) -> None:
         from .devtools import make_dummy_data
 
         make_dummy_data(cfg)
-    elif nome == "tiny-models":
-        from .devtools import make_tiny_models
-
-        make_tiny_models(cfg)
     else:
         raise SystemExit(f"passo desconhecido '{step}'")
 

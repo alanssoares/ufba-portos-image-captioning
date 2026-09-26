@@ -175,7 +175,7 @@ def predict_local(cfg: Config, variant: str, redo: bool = False) -> Path:
             with Image.open(p) as img:
                 imagens.append(img.convert("RGB"))
         t0 = time.perf_counter()
-        legendas = model.generate(model.preprocess(imagens), **kwargs)
+        legendas = model.generate(imagens, **kwargs)
         seg = (time.perf_counter() - t0) / len(lote)
         for p, legenda in zip(lote, legendas):
             append_jsonl(
@@ -183,7 +183,7 @@ def predict_local(cfg: Config, variant: str, redo: bool = False) -> Path:
                 {
                     "image_id": p.stem,
                     "variante": variant,
-                    "modelo": f"{meta.get('llm_base', {}).get('value', '?')}+{variant}",
+                    "modelo": f"{cfg.model.model_id}+{variant}",
                     "legenda": " ".join(legenda.split()),
                     "segundos": seg,
                 },

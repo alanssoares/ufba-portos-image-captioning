@@ -81,8 +81,7 @@ def export(cfg: Config, out: Path | None = None, with_images: bool | None = None
         "variantes": incluidas,
         "splits_sha1": splits_sha1(resolve_path(cfg, "splits_json")),
         "com_imagens": with_images,
-        "llm_id": cfg.model.llm_id,
-        "vision_id": cfg.model.vision_id,
+        "model_id": cfg.model.model_id,
     }
     total = sum(p.stat().st_size for p, _ in entradas)
     print(f"Exportando {', '.join(incluidas)} ({len(entradas)} arquivos, {total / 1024**3:.2f} GB) -> {out}")

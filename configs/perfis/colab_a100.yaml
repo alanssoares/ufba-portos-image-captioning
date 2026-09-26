@@ -1,5 +1,5 @@
 # Colab com GPU A100 (40 GB, bf16 nativo). Tudo cabe com folga, inclusive o
-# fine-tuning completo em fp32 com AdamW 8 bits.
+# fine-tuning completo com pesos fp32 e AdamW 8 bits.
 
 model:
   dtype: bf16

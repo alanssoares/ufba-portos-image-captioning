@@ -6,15 +6,15 @@
 pyyaml>=6.0
 packaging>=23.0
 
-# Modelos e treino (VLM = SigLIP + projetor + Manaca-1B)
-transformers>=4.46
+# Modelos e treino (Qwen3-VL-2B)
+transformers>=4.57          # suporte ao Qwen3-VL
 accelerate>=0.33
 peft>=0.13                  # LoRA / QLoRA
 bitsandbytes>=0.45 ; platform_system != "Darwin"   # 4 bits (QLoRA) e Adam 8 bits — exige CUDA
 safetensors>=0.4
-sentencepiece>=0.2
 tokenizers>=0.19
 pillow>=10.0
+# torchvision: instale junto com o torch (linha acima) — o processador do Qwen3-VL usa
 
 # Rotulagem (Claude) e modelo gold (Gemini)
 anthropic>=0.40

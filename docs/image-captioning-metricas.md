@@ -140,8 +140,8 @@ podem ser úteis (sem substituir as métricas gerais acima, que continuam sendo 
   o modelo pode confundir (ex: transtêiner vs. portêiner; navio graneleiro vs. porta-contêineres;
   silo vs. tanque). Uma análise de erro qualitativa sobre esses pares é mais informativa do que
   olhar só a métrica agregada.
-- **CLIPScore como complemento útil**: como o dataset deste projeto é pequeno (imagens do Wikimedia
-  Commons sobre o Porto de Salvador, conforme `docs/dataset-licensing.md`) e pode ter poucas
+- **CLIPScore como complemento útil**: como o dataset deste projeto é pequeno (imagens do Porto de
+  Salvador com licença aberta — ver [`dataset.md`](dataset.md)) e pode ter poucas
   legendas de referência por imagem, métricas que não dependem de referências (CLIPScore) ajudam a
   avaliar legendas mesmo com poucos exemplos anotados manualmente.
 - **Contexto de cena vs. detalhe técnico**: decidir, na avaliação, se o objetivo é legendas mais

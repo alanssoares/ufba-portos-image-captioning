@@ -25,7 +25,7 @@ def code(texto):
 
 
 md(f"""
-# Treino no Colab — SLM PT-BR para legendas do Porto de Salvador
+# Treino no Colab — Qwen3-VL-2B para legendas do Porto de Salvador
 
 Divisão de trabalho do projeto:
 
@@ -44,7 +44,7 @@ máquina **não** aparecem no servidor — os dados chegam pelo Google Drive, co
 | GPU | perfil | fine-tuning |
 |---|---|---|
 | T4 (15 GB) | `colab_t4` | **parcial** (últimas 8 camadas) — o completo não cabe |
-| L4 (22,5 GB) | `colab_l4` | completo (fp32 + Adam 8 bits) |
+| L4 (22,5 GB) | `colab_l4` | completo (pesos bf16 + Adam 8 bits) |
 | A100 (40 GB) | `colab_a100` | completo, com folga |
 """)
 
@@ -133,12 +133,13 @@ print("imagens:", len(list((BASE / "data" / "images").glob("*.jpg"))))
 md("""
 ## 5. (Opcional) Teste de fumaça
 
-Pipeline inteiro com imagens sintéticas e modelos minúsculos, sem API e sem download, em
-`/content/smoke` (~1–2 min). Prova que o ambiente está certo antes de gastar GPU.
+Pipeline inteiro com imagens sintéticas, 2 passos de treino por variante e sem chamar API,
+em `/content/smoke`. Baixa o Qwen3-VL-2B (~4,5 GB, fica em cache para o treino de verdade) e
+leva poucos minutos. Prova que o ambiente está certo antes do treino completo.
 """)
 
 code("""
-!python -m src run --config configs/perfis/smoke.yaml --set paths.root=/content/smoke --set dev.tiny_dir=/content/smoke/tiny --set model.llm_id=/content/smoke/tiny/llm --set model.vision_id=/content/smoke/tiny/vision
+!python -m src run --config configs/perfis/smoke.yaml --set paths.root=/content/smoke
 """)
 
 md("""
@@ -205,7 +206,7 @@ pd.DataFrame(linhas).set_index("variante").round(3)
 md("""
 ## 8. Exportar para a inferência local
 
-Gera `MyDrive/ufba-portos-captioning/exports/modelos.zip` (~3,5 GB com o fine-tuning completo)
+Gera `MyDrive/ufba-portos-captioning/exports/modelos.zip` (~4,5 GB com o fine-tuning completo)
 com as variantes, `labels.jsonl` e `splits.json`. Na sua máquina:
 
 ```bash
