@@ -4,7 +4,7 @@
 #   python -m src import --from <modelos.zip baixado do Drive>
 #   python -m src run --config configs/perfis/local_4gb.yaml
 #
-# Memoria: o Manaca-1B em 16 bits ocupa ~3,4 GB so de pesos, entao todas as
+# Memoria: o Qwen3-VL-2B em 16 bits ocupa ~4,3 GB so de pesos, entao todas as
 # variantes sao carregadas em 4 bits (generation.load_4bit). Isso muda a comparacao
 # em relacao a inferencia em 16 bits — registre na monografia, ou rode com
 # --set generation.load_4bit=false numa GPU maior. Sem GPU: --set device=cpu

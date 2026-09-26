@@ -3,7 +3,7 @@ from src.config import load_config, parse_override, resolve_path, stage_config
 
 def test_defaults_carregam():
     cfg = load_config()
-    assert cfg.model.llm_id == "menezesbruno/manaca-1b-base"
+    assert cfg.model.model_id == "Qwen/Qwen3-VL-2B-Instruct"
     assert cfg.labeling.model == "claude-opus-5-5"
     assert cfg.variants == ["base", "pretrain", "finetune", "lora", "qlora", "gold"]
 
@@ -30,6 +30,17 @@ def test_stage_herda_common():
         assert stage_config(cfg, estagio).batch_size == 7
     q = stage_config(cfg, "qlora")
     assert q.quantize_4bit is True and q.r == 16 and "q_proj" in q.target_modules
+    assert "visual" in q.quant.skip_modules
+
+
+def test_regex_lora_so_no_llm():
+    import re
+
+    alvo = stage_config(load_config(), "lora").target_modules
+    assert re.fullmatch(alvo, "model.language_model.layers.0.self_attn.q_proj")
+    assert re.fullmatch(alvo, "model.language_model.layers.27.mlp.down_proj")
+    assert not re.fullmatch(alvo, "model.visual.blocks.0.attn.proj")
+    assert not re.fullmatch(alvo, "model.visual.merger.linear_fc1")
 
 
 def test_flag_init_from():

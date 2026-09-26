@@ -1,11 +1,11 @@
 # Colab com GPU T4 (15 GB, sem bf16 nativo -> fp16).
 #
-# O fine-tuning COMPLETO do Manaca-1B (1,7 B params) nao cabe na T4: so os pesos em
-# fp32 + gradientes + Adam 8 bits passam de 17 GB. Aqui o "finetune" vira PARCIAL:
-# projetor + as ultimas 8 camadas + norma final (~490 M params). O relatorio mostra
-# llm_mode=partial para deixar isso explicito. Para o completo, use colab_l4 ou colab_a100.
+# O fine-tuning COMPLETO do Qwen3-VL-2B (~2,1 B params) nao cabe na T4: pesos fp32 +
+# gradientes + Adam 8 bits passam de 18 GB. Aqui o "finetune" vira PARCIAL: conector +
+# as ultimas 8 das 28 camadas do LLM (~400 M params). O relatorio mostra llm_mode=partial
+# para deixar isso explicito. Para o completo, use colab_l4 ou colab_a100.
 #
-# Se aparecer loss NaN (o Manaca foi treinado em bf16 e fp16 pode estourar):
+# Se aparecer loss NaN (o Qwen3-VL foi treinado em bf16 e fp16 pode estourar):
 #   --set model.dtype=fp32
 
 model:

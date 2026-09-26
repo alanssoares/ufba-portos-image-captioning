@@ -37,11 +37,11 @@ ORDEM = [
 ]
 
 DESCRICAO = {
-    "base": "SLM + encoder, projetor aleatorio (sem treino)",
-    "pretrain": "pre-treino de dominio (so projetor)",
-    "finetune": "fine-tuning completo (projetor + LLM)",
-    "lora": "LoRA no LLM + projetor",
-    "qlora": "QLoRA (LLM 4 bits) + projetor",
+    "base": "Qwen3-VL-2B original, zero-shot (sem treino)",
+    "pretrain": "pre-treino continuado de dominio (so o conector visao->LLM)",
+    "finetune": "fine-tuning completo (conector + LLM)",
+    "lora": "LoRA no LLM + conector",
+    "qlora": "QLoRA (LLM 4 bits) + conector",
     "gold": "VLM grande via API (referencia externa)",
 }
 
@@ -202,7 +202,7 @@ def run(cfg: Config, preds_glob: list[str] | None = None, refs_path: Path | None
         "# Comparativo das variantes",
         "",
         f"Referencias: {origem} — rotulador `{cfg.labeling.model}`. "
-        f"Modelo gold: `{cfg.gold_model.model}` ({cfg.gold_model.provider}). SLM: `{cfg.model.llm_id}` + `{cfg.model.vision_id}`.",
+        f"Modelo gold: `{cfg.gold_model.model}` ({cfg.gold_model.provider}). SLM: `{cfg.model.model_id}`.",
         "",
         "| variante | o que e |",
         "|---|---|",

@@ -1,46 +1,37 @@
-# Teste de fumaca: pipeline inteiro na CPU, sem dataset, sem GPU, sem chave de API,
-# sem baixar modelo. Usa imagens sinteticas e modelos minusculos aleatorios.
+# Teste de fumaca: o pipeline inteiro em poucos minutos, com imagens sinteticas, 2 passos
+# de treino por variante e o modelo gold "dummy" (sem chave de API). Usa o Qwen3-VL-2B de
+# verdade (baixa ~4,5 GB na primeira vez) e precisa de GPU CUDA — a T4 gratuita do Colab
+# serve. As metricas nao significam nada: o objetivo e provar que as pecas encaixam.
 #
 #   python -m src run --config configs/perfis/smoke.yaml
-#
-# As metricas nao significam nada: o objetivo e provar que as pecas encaixam.
 
 paths:
   root: outputs/smoke          # isola tudo do dataset de verdade
 
 dev:
-  n_images: 30
-  tiny_dir: outputs/tiny
+  n_images: 12
 
 model:
-  llm_id: outputs/tiny/llm
-  vision_id: outputs/tiny/vision
-  prompt: "descrição da imagem do porto:"
-  dtype: fp32
+  image_max_side: 224
 
 training:
   common:
-    epochs: 2
-    batch_size: 4
+    epochs: 1
+    max_steps: 2
+    batch_size: 2
     grad_accum: 1
-    log_every: 5
-    gradient_checkpointing: false
-    optim: adamw
-  pretrain:
-    lr: 5.0e-3
+    log_every: 1
+    gradient_checkpointing: true
   finetune:
-    lr: 1.0e-3
+    llm_mode: partial          # cabe em qualquer GPU; o completo e testado no treino real
+    unfreeze_last_n_layers: 2
     optim: adamw
-  lora:
-    lr: 5.0e-3
-  qlora:
-    lr: 5.0e-3
-    fallback_no_cuda: true     # na CPU vira LoRA sem quantizacao (so para teste)
 
 generation:
-  batch_size: 8
+  batch_size: 4
   num_beams: 1
   max_new_tokens: 20
+  limit: 4
 
 gold_model:
   provider: dummy              # nao chama API
@@ -48,11 +39,10 @@ gold_model:
 evaluation:
   bertscore: false
   clipscore: false
-  n_examples: 3
+  n_examples: 2
 
 pipeline:
   steps:
-    - tiny-models
     - dummy-data
     - split
     - train:base
