@@ -224,6 +224,8 @@ __marimo__/
 # data/*.jsonl (legendas).
 data/raw/
 results/*.jsonl
+# Excecao: o gold depende de API com cota diaria e nao e deterministico — versionado.
+!results/preds_gold.jsonl
 
 # Modelos treinados, modelos minusculos do smoke test e checkpoints (grandes)
 outputs/
