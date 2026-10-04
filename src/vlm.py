@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +116,41 @@ def load_processor(ref: str):
     return AutoProcessor.from_pretrained(resolve_model_ref(ref))
 
 
+SKIP_PADRAO = ["visual", "lm_head"]   # encoder de visao (com os mergers) e lm_head ficam em 16 bits
+
+
+def bnb_skip_patterns(nomes: list[str]) -> list[str]:
+    """Padroes de `llm_int8_skip_modules` que funcionam em qualquer versao do transformers.
+
+    transformers 4.x pulava o modulo se o nome aparecesse em QUALQUER posicao do caminho
+    ("visual" casava com "model.visual.merger.linear_fc1"). A 5.x compara do INICIO
+    (`re.match`) ou pelo fim (`endswith`), e "visual" deixou de casar — o encoder de visao e
+    os mergers eram quantizados em 4 bits. Para cada nome, mantemos o nome puro (4.x) e
+    acrescentamos o regex `(.*\.)?nome` (5.x), que casa o componente em qualquer profundidade.
+    """
+    padroes: list[str] = []
+    for nome in nomes:
+        for p in (nome, rf"(.*\.)?{re.escape(nome)}"):
+            if p not in padroes:
+                padroes.append(p)
+    return padroes
+
+
+def modulos_quantizados_indevidos(model, nomes: list[str], classe_4bit=None) -> list[str]:
+    """Modulos 4 bits cujo caminho contem um componente que deveria ficar em 16 bits."""
+    if classe_4bit is None:
+        try:
+            import bitsandbytes as bnb
+        except ImportError:
+            return []
+        classe_4bit = bnb.nn.Linear4bit
+    componentes = [re.compile(rf"(^|\.){re.escape(n)}(\.|$)") for n in nomes]
+    return [
+        nome for nome, mod in model.named_modules()
+        if isinstance(mod, classe_4bit) and any(c.search(nome) for c in componentes)
+    ]
+
+
 def load_model(ref: str, dtype: torch.dtype, device: str, attn: str | None, quant: dict | None = None):
     """Carrega a classe de arquitetura declarada no config (ex: Qwen3VLForConditionalGeneration)."""
     import transformers
@@ -130,6 +166,7 @@ def load_model(ref: str, dtype: torch.dtype, device: str, attn: str | None, quan
     if quant:
         from transformers import BitsAndBytesConfig
 
+        skip = list(quant.get("skip_modules", SKIP_PADRAO))
         compute = resolve_dtype(quant.get("compute_dtype", "auto"), device)
         kwargs["quantization_config"] = BitsAndBytesConfig(
             load_in_4bit=True,
@@ -137,11 +174,18 @@ def load_model(ref: str, dtype: torch.dtype, device: str, attn: str | None, quan
             bnb_4bit_use_double_quant=bool(quant.get("double_quant", True)),
             bnb_4bit_compute_dtype=compute,
             # encoder de visao e lm_head ficam em 16 bits (QLoRA classico so quantiza o LLM)
-            llm_int8_skip_modules=list(quant.get("skip_modules", ["visual", "lm_head"])),
+            llm_int8_skip_modules=bnb_skip_patterns(skip),
         )
         kwargs["device_map"] = {"": torch.cuda.current_device()}
         dtype = compute
     model = _from_pretrained(cls, ref, dtype, **kwargs)
+    if quant:
+        indevidos = modulos_quantizados_indevidos(model, skip)
+        if indevidos:
+            raise RuntimeError(
+                f"{len(indevidos)} modulos de {skip} foram quantizados em 4 bits, mas deveriam ficar em "
+                f"16 bits (ex: {indevidos[:3]}). Verifique quant.skip_modules e a versao do transformers."
+            )
     if not quant:
         model = model.to(device)
     return model
