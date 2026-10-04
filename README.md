@@ -10,7 +10,7 @@ fine-tuning completo, LoRA e QLoRA, contra um VLM de fronteira.
 | **Dataset** | imagens do Porto de Salvador, normalizadas e com proveniência/licença por imagem ([`docs/dataset.md`](docs/dataset.md)) |
 | **Referências** | 3 legendas por imagem geradas pelo **Claude** (`claude-opus-5-5`) com glossário portuário |
 | **SLM** | **Qwen3-VL-2B-Instruct** (`Qwen/Qwen3-VL-2B-Instruct`, ~2,1 B: encoder de visão + conector + LLM Qwen3 de 1,7 B), multilíngue |
-| **Variantes** | `base` · `pretrain` · `finetune` · `lora` · `qlora` · `gold` (Gemini Pro via API) |
+| **Variantes** | `base` · `pretrain` · `finetune` · `lora` · `qlora` · `gold` (Gemini Flash via API) |
 | **Métricas** | BLEU, ROUGE-L, CIDEr, BERTScore (BERTimbau), CLIPScore/RefCLIPScore, diversidade + custo de treino |
 | **Onde roda** | dados, inferência e avaliação **localmente**; treino no **Google Colab** (navegador ou VS Code) |
 | **Configuração** | tudo em [`configs/default.yaml`](configs/default.yaml), com perfis por hardware e `--set chave=valor` |
@@ -72,7 +72,7 @@ LLM Qwen3 (~1,7 B):  <|im_start|>user [imagem] {instrução}<|im_end|>          
 | `finetune` | `pretrain`* | conector + **todos** os pesos do LLM (~1,7 B) | — | teto do SLM |
 | `lora` | `pretrain`* | conector + adaptadores LoRA (~1% do LLM) | — | eficiência de parâmetros |
 | `qlora` | `pretrain`* | conector + adaptadores LoRA | LLM em 4 bits (NF4) | custo da quantização |
-| `gold` | — | nada — **Gemini Pro** via API | — | distância para um VLM de fronteira |
+| `gold` | — | nada — **Gemini Flash** via API (`gemini-3.8-flash`) | — | distância para um VLM grande de outro fornecedor |
 
 \* `--set training.<estagio>.init_from=base` para partir do base.
 
@@ -279,7 +279,7 @@ python -m src label --set labeling.model=claude-sonnet-5            # rotulador 
 python -m src train --stage lora --set training.lora.r=32 --set training.lora.alpha=64
 python -m src train --stage qlora --set training.qlora.init_from=base
 python -m src train --stage finetune --set training.finetune.weights_dtype=bf16   # menos memória
-python -m src predict --variant gold --set gold_model.model=gemini-3.1-pro-preview
+python -m src predict --variant gold --set gold_model.model=gemini-3.1-pro-preview   # Pro: exige faturamento
 python -m src evaluate --set evaluation.clipscore=false
 ```
 
