@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 """
-Baixa imagens do Wikimedia Commons a partir de uma lista de links
-e gera o metadata.csv (fonte, URL, licença, autor...).
+Baixa imagens do Wikimedia Commons a partir de uma lista de links e registra a
+proveniencia de cada arquivo (fonte, URL, autor, licenca...) em um CSV de fontes.
 
-Rode a partir da raiz do repositório:
-    python src/data/baixar_e_gerar_metadata.py data/sources/commons_links.txt
-    python src/data/baixar_e_gerar_metadata.py data/sources/commons_links.txt --largura 1024
+Rode a partir da raiz do repositorio:
+    python -m src.fetch_commons_dataset data/sources/commons_links.txt
+    python -m src.fetch_commons_dataset data/sources/commons_links.txt --largura 2048
+    python -m src.fetch_commons_dataset data/sources/commons_links.txt --contato voce@exemplo.com
 
-O arquivo de links tem um link (ou título) por linha. Aceita:
+O arquivo de links tem um link (ou titulo) por linha. Aceita:
     https://commons.wikimedia.org/wiki/File:Exemplo.jpg
     File:Exemplo.jpg
     Exemplo.jpg
-Linhas vazias e linhas começando com # são ignoradas.
+Linhas vazias e linhas comecando com # sao ignoradas.
 
-Resultado (caminhos padrão, relativos ao diretório atual):
-    data/raw/images/<arquivos>    <- imagens (não versionar)
-    data/metadata.csv             <- metadados (versionar)
+Resultado (caminhos padrao, relativos ao diretorio atual):
+    data/raw/images/<arquivos>             <- imagens originais (nao versionar)
+    data/sources/commons_metadata.csv      <- proveniencia do Commons (versionar)
+
+Este CSV NAO e o manifesto do pipeline: `python -m src prepare` le o CSV de fontes
+(paths.commons_csv) e preenche sozinho as colunas fonte/url/licenca do
+data/metadata.csv, casando pelo nome do arquivo.
+
+Rodar de novo e incremental: arquivos ja registrados e presentes no disco nao sao
+baixados de novo, e o CSV e mesclado (nunca sobrescrito do zero).
+
+A Wikimedia exige um User-Agent com contato: use --contato ou a variavel de
+ambiente WIKIMEDIA_CONTACT.
 
 Para usar outros caminhos: --imagens PASTA  e  --metadata ARQUIVO.csv
 """
@@ -34,9 +45,11 @@ import urllib.request
 from datetime import date
 
 API = "https://commons.wikimedia.org/w/api.php"
-# A Wikimedia exige um User-Agent identificável. TROQUE pelo seu contato.
-USER_AGENT = "MeuDataset-Metadata/1.0 (seu-email@exemplo.com)"
-BATCH = 50  # máximo de títulos por requisição à API
+USER_AGENT = "ufba-portos-image-captioning/1.0 ({contato})"
+BATCH = 50  # maximo de titulos por requisicao a API
+
+PADRAO_IMAGENS = os.path.join("data", "raw", "images")
+PADRAO_METADATA = os.path.join("data", "sources", "commons_metadata.csv")
 
 CAMPOS = [
     "arquivo", "fonte", "url_pagina", "url_arquivo", "autor", "creditos",
@@ -44,10 +57,12 @@ CAMPOS = [
     "mime", "largura", "altura", "sha256", "data_consulta",
 ]
 
+_user_agent = USER_AGENT.format(contato="contato-nao-informado")
+
 
 def abrir(url, tentativas=4):
     """GET com User-Agent e retry simples para 429/5xx."""
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    req = urllib.request.Request(url, headers={"User-Agent": _user_agent})
     for n in range(tentativas):
         try:
             return urllib.request.urlopen(req, timeout=60)
@@ -100,7 +115,7 @@ def consultar(titulos, largura):
 
 
 def nome_seguro(titulo, usados):
-    """Nome de arquivo local seguro e único."""
+    """Nome de arquivo local seguro e unico."""
     base = titulo.removeprefix("File:").replace(" ", "_")
     base = re.sub(r"[^\w.\-]", "_", base)
     nome, ext = os.path.splitext(base)
@@ -124,20 +139,50 @@ def baixar(url, destino):
     return h.hexdigest()
 
 
+def ler_csv(caminho):
+    """Linhas ja registradas no CSV de fontes (vazio se nao existir)."""
+    if not os.path.exists(caminho):
+        return []
+    with open(caminho, encoding="utf-8", newline="") as f:
+        leitor = csv.DictReader(f)
+        faltando = {"arquivo", "url_pagina"} - set(leitor.fieldnames or [])
+        if faltando:
+            sys.exit(f"{caminho} nao parece um CSV de fontes do Commons (faltam {sorted(faltando)}). "
+                     "Use --metadata para apontar outro arquivo.")
+        return list(leitor)
+
+
+def gravar_csv(caminho, linhas):
+    tmp = caminho + ".part"
+    with open(tmp, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=CAMPOS, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(sorted(linhas, key=lambda l: l["arquivo"].lower()))
+    os.replace(tmp, caminho)
+
+
 def main():
+    global _user_agent
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("links", help="arquivo .txt com os links")
-    ap.add_argument("--imagens", default=os.path.join("data", "raw", "images"),
-                    help="pasta onde salvar as imagens (padrão: data/raw/images)")
-    ap.add_argument("--metadata", default=os.path.join("data", "metadata.csv"),
-                    help="caminho do CSV de metadados (padrão: data/metadata.csv)")
+    ap.add_argument("--imagens", default=PADRAO_IMAGENS,
+                    help=f"pasta onde salvar as imagens (padrao: {PADRAO_IMAGENS})")
+    ap.add_argument("--metadata", default=PADRAO_METADATA,
+                    help=f"CSV de fontes do Commons (padrao: {PADRAO_METADATA})")
     ap.add_argument("--largura", type=int, default=0,
-                    help="baixar versão redimensionada com essa largura em px "
-                         "(padrão: 0 = original)")
+                    help="baixar versao redimensionada com essa largura em px "
+                         "(padrao: 0 = original)")
     ap.add_argument("--pausa", type=float, default=1.0,
-                    help="segundos entre downloads (padrão: 1.0)")
+                    help="segundos entre downloads (padrao: 1.0)")
+    ap.add_argument("--contato", default=os.environ.get("WIKIMEDIA_CONTACT", ""),
+                    help="e-mail ou URL para o User-Agent (padrao: $WIKIMEDIA_CONTACT)")
     args = ap.parse_args()
+
+    if args.contato:
+        _user_agent = USER_AGENT.format(contato=args.contato)
+    else:
+        print("AVISO: sem --contato / WIKIMEDIA_CONTACT; a Wikimedia pode limitar as requisicoes.")
 
     pasta_img = args.imagens
     caminho_csv = args.metadata
@@ -145,18 +190,21 @@ def main():
     os.makedirs(os.path.dirname(caminho_csv) or ".", exist_ok=True)
 
     with open(args.links, encoding="utf-8") as f:
-        titulos = [para_titulo(l) for l in f if l.strip() and not l.startswith("#")]
+        titulos = [para_titulo(l) for l in f if l.strip() and not l.lstrip().startswith("#")]
     titulos = list(dict.fromkeys(titulos))
     print(f"{len(titulos)} imagens na lista.")
 
-    linhas, falhas, usados = [], [], set()
+    # Registros anteriores: chave = pagina do Commons (estavel entre execucoes).
+    registros = {l["url_pagina"]: l for l in ler_csv(caminho_csv)}
+    usados = {l["arquivo"].lower() for l in registros.values()}
+    novas, reaproveitadas, falhas = 0, 0, []
     hoje = date.today().isoformat()
 
     for i in range(0, len(titulos), BATCH):
         lote = titulos[i:i + BATCH]
         dados = consultar(lote, args.largura)
 
-        # título pedido -> título final (após normalização/redirecionamento)
+        # titulo pedido -> titulo final (apos normalizacao/redirecionamento)
         mapa = {t: t for t in lote}
         for chave in ("normalized", "redirects"):
             for m in dados.get(chave, []):
@@ -168,16 +216,21 @@ def main():
         for pedido in lote:
             pag = paginas.get(mapa[pedido])
             if not pag or pag.get("missing") or "imageinfo" not in pag:
-                falhas.append((pedido, "não encontrado no Commons"))
+                falhas.append((pedido, "nao encontrado no Commons"))
                 continue
 
             info = pag["imageinfo"][0]
+            anterior = registros.get(info["descriptionurl"])
+            if anterior and os.path.exists(os.path.join(pasta_img, anterior["arquivo"])):
+                reaproveitadas += 1
+                continue
+
             meta = info.get("extmetadata", {})
             val = lambda k: limpar_html(meta.get(k, {}).get("value", ""))
 
             url_dl = info.get("thumburl") if args.largura else info["url"]
             url_dl = url_dl or info["url"]
-            nome = nome_seguro(pag["title"], usados)
+            nome = anterior["arquivo"] if anterior else nome_seguro(pag["title"], usados)
             destino = os.path.join(pasta_img, nome)
 
             print(f"Baixando {nome} ...")
@@ -185,10 +238,11 @@ def main():
                 sha = baixar(url_dl, destino)
             except Exception as e:
                 falhas.append((pedido, f"erro no download: {e}"))
-                usados.discard(nome.lower())
+                if not anterior:
+                    usados.discard(nome.lower())
                 continue
 
-            linhas.append({
+            registros[info["descriptionurl"]] = {
                 "arquivo": nome,
                 "fonte": "Wikimedia Commons",
                 "url_pagina": info["descriptionurl"],  # citar esta
@@ -204,25 +258,26 @@ def main():
                 "altura": info.get("thumbheight", info.get("height", "")),
                 "sha256": sha,
                 "data_consulta": hoje,
-            })
+            }
+            novas += 1
+            # grava a cada imagem: uma interrupcao nao perde a proveniencia ja baixada
+            gravar_csv(caminho_csv, registros.values())
             time.sleep(args.pausa)
 
-    with open(caminho_csv, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=CAMPOS)
-        w.writeheader()
-        w.writerows(linhas)
+    gravar_csv(caminho_csv, registros.values())
 
-    print(f"\n{len(linhas)} imagens baixadas -> {pasta_img}")
-    print(f"Metadados -> {caminho_csv}")
+    print(f"\n{novas} baixadas, {reaproveitadas} ja existentes -> {pasta_img}")
+    print(f"Fontes ({len(registros)} registros) -> {caminho_csv}")
+    print("Proximo passo: python -m src prepare")
 
     if falhas:
         print("\nFalhas:")
         for t, motivo in falhas:
             print(f"  - {t}: {motivo}")
 
-    sem_lic = [l["arquivo"] for l in linhas if not l["licenca"]]
+    sem_lic = sorted(l["arquivo"] for l in registros.values() if not l["licenca"])
     if sem_lic:
-        print("\nATENÇÃO: sem licença identificada (confira a página manualmente):")
+        print("\nATENCAO: sem licenca identificada (confira a pagina manualmente):")
         for a in sem_lic:
             print("  -", a)
 

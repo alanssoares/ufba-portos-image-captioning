@@ -140,6 +140,16 @@ infraestrutura, operação, vistas gerais — com pontos de vista, horários e c
 Recomendado: **≥ 700 imagens** (≥ 100 no teste, para o CIDEr ficar estável). Use só imagens com
 licença que permita uso acadêmico (fotos próprias, Wikimedia Commons, acervos com autorização).
 
+Para imagens do **Wikimedia Commons**, liste os links em `data/sources/commons_links.txt` e rode:
+
+```bash
+python -m src.fetch_commons_dataset data/sources/commons_links.txt --contato voce@exemplo.com
+```
+
+Baixa os originais em `data/raw/images/` e registra autor, URL e licença em
+`data/sources/commons_metadata.csv` (`paths.commons_csv`). É incremental: rodar de novo só baixa
+o que é novo e mescla o CSV.
+
 ### 5.2 Normalizar — `prepare`
 
 ```bash
@@ -148,8 +158,10 @@ python -m src prepare
 
 Corrige a orientação EXIF, converte para RGB, reduz o lado maior para 1024 px (`prepare.max_side`),
 deduplica por SHA-1 e salva como `data/images/psa_XXXX.jpg`. Cria/atualiza `data/metadata.csv`
-com uma linha por imagem. **Preencha à mão as colunas `fonte`, `url` e `licenca`** — sem isso o
-dataset não é publicável nem citável. Rodar de novo processa só as imagens novas.
+com uma linha por imagem. As colunas `fonte`, `url` e `licenca` vêm automaticamente do
+`data/sources/commons_metadata.csv` (casando pelo nome do arquivo); **para imagens de outras
+fontes, preencha-as à mão** — sem isso o dataset não é publicável nem citável. Valores já
+preenchidos nunca são sobrescritos. Rodar de novo processa só as imagens novas.
 
 ### 5.3 Rotular — `label`
 
@@ -303,7 +315,8 @@ configs/
 data/
   raw/                      imagens originais (fora do git)
   images/                   normalizadas, psa_XXXX.jpg (fora do git)
-  metadata.csv              proveniência e licença (versionado)
+  metadata.csv              manifesto do pipeline: proveniência e licença (versionado)
+  sources/                  commons_links.txt + commons_metadata.csv (fontes do Commons, versionado)
   labels.jsonl              legendas de referência do Claude (versionado)
   splits.json               treino / validação / teste (versionado)
   sample/                   legendas fictícias (só texto) para testar a avaliação
