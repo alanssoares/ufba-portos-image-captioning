@@ -61,7 +61,7 @@ meçam o que interessa: **o ganho de adaptar ao domínio portuário**.
 | **finetune** | pretrain* | conector + **todos** os pesos do LLM (~1,7 B) | — |
 | **lora** | pretrain* | conector + adaptadores LoRA no LLM | — |
 | **qlora** | pretrain* | conector + adaptadores LoRA | LLM em 4 bits (NF4) |
-| **gold** | — | nada — VLM grande via API (Gemini Pro) | — |
+| **gold** | — | nada — VLM grande via API (Gemini Flash, `gemini-3.8-flash`) | — |
 
 \* `training.<estágio>.init_from` escolhe o ponto de partida: `pretrain` (padrão) ou `base`.
 
@@ -103,12 +103,25 @@ memória do LLM de ~3,4 GB para ~1 GB. Pergunta que responde: *a quantização c
 
 ### gold — o teto externo
 
-Um VLM grande via API (padrão: Gemini Pro, `gold_model.model`) legenda o teste com a **mesma
+Um VLM grande via API (padrão: Gemini Flash `gemini-3.8-flash`, `gold_model.model`) legenda o teste com a **mesma
 instrução de tarefa das variantes Qwen** (`model.instruction`) e, a mais, o glossário e as regras
 do rotulador como *system prompt* (`gold_model.use_domain_prompt`) — ver
 [`prompt-rotulagem.md`](prompt-rotulagem.md#42-mesma-especificação-para-todos-os-modelos-avaliados). Como é de outro fornecedor, é avaliado
 contra as referências do Claude sem circularidade. Mostra a distância entre o SLM ajustado e um
 modelo de fronteira.
+
+**Por que Flash e não Pro (out/2026).** O desenho original previa o `gemini-3.1-pro-preview`, mas
+o modelo Pro não tem cota no nível gratuito da API do Gemini (`limit: 0`, erro
+`429 RESOURCE_EXHAUSTED`), e o projeto não usa APIs pagas. O gold passou a ser o
+`gemini-3.8-flash`, que tem cota gratuita. Impactos a declarar:
+
+- o **teto fica mais baixo**: um modelo Flash é menor que o Pro, então a distância entre o SLM e
+  o gold subestima a distância para o melhor modelo disponível do fornecedor;
+- a propriedade que importa para a validade continua: é um VLM grande de **outro fornecedor**
+  (Google), avaliado contra referências do Claude, sem circularidade;
+- para reproduzir com o Pro, basta ativar o faturamento e rodar
+  `python -m src predict --variant gold --redo --set gold_model.model=gemini-3.1-pro-preview`;
+  o nome do modelo usado fica gravado em cada linha de `results/preds_gold.jsonl` (campo `modelo`).
 
 ## 4. Comparabilidade — o que é mantido fixo
 

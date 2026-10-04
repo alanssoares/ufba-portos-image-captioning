@@ -175,7 +175,9 @@ generation:
 # ---------------------------------------------------------------------------
 gold_model:
   provider: gemini                 # gemini | dummy
-  model: gemini-3.1-pro-preview
+  # Flash: o Pro (gemini-3.1-pro-preview) nao tem cota no nivel gratuito da API (limite 0).
+  # Para usar o Pro, ative o faturamento e rode com --set gold_model.model=gemini-3.1-pro-preview.
+  model: gemini-3.8-flash
   api_key_env: GEMINI_API_KEY
   use_domain_prompt: true          # system prompt com glossario + regras do rotulador (src/prompts.py)
   temperature: null                # null = padrao do provedor
