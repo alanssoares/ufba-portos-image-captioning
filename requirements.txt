@@ -10,6 +10,8 @@ packaging>=23.0
 transformers>=4.57          # suporte ao Qwen3-VL
 accelerate>=0.33
 peft>=0.13                  # LoRA / QLoRA
+# torchao NAO e usado. Se houver torchao < 0.16 instalado (ex: Colab), o peft falha no LoRA:
+#   pip uninstall -y torchao
 bitsandbytes>=0.45 ; platform_system != "Darwin"   # 4 bits (QLoRA) e Adam 8 bits — exige CUDA
 safetensors>=0.4
 tokenizers>=0.19
