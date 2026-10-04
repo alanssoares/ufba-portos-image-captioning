@@ -170,10 +170,11 @@ python -m src label --set labeling.limit=5    # confira qualidade e custo primei
 python -m src label                           # todas as pendentes
 ```
 
-O Claude recebe cada imagem com o glossário portuário e o contexto do Porto de Salvador
-([`src/prompts.py`](src/prompts.py)) e devolve, em JSON estruturado, **3 legendas** com focos
-diferentes, os **objetos** visíveis e uma flag **`fora_de_dominio`**. Regras principais: descrever
-só o visível, nunca inventar nomes, termo técnico só com certeza visual. Retomável: imagens já
+O Claude recebe cada imagem com o glossário portuário ([`src/prompts.py`](src/prompts.py)) e
+devolve, em JSON estruturado, **3 legendas** com focos fixos (operação · objetos e sua relação ·
+visão geral), os **objetos** visíveis e uma flag **`fora_de_dominio`**. O foco é técnico: ação em
+curso e identificação dos equipamentos — sem nomes próprios, estado de conservação, clima ou luz.
+Regras completas em [`docs/dataset.md`](docs/dataset.md#3-legendas-rótulos). Retomável: imagens já
 rotuladas são puladas.
 
 ### 5.4 Dividir — `split`
@@ -314,7 +315,7 @@ configs/
   perfis/*.yaml             local_4gb, colab_t4, colab_l4, colab_a100, smoke
 data/
   raw/                      imagens originais (fora do git)
-  images/                   normalizadas, psa_XXXX.jpg (fora do git)
+  images/                   normalizadas, psa_XXXX.jpg (versionadas, ~18 MB)
   metadata.csv              manifesto do pipeline: proveniência e licença (versionado)
   sources/                  commons_links.txt + commons_metadata.csv (fontes do Commons, versionado)
   labels.jsonl              legendas de referência do Claude (versionado)

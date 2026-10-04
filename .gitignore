@@ -218,10 +218,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 # --- projeto ---
-# Imagens ficam fora do versionamento (peso + direitos de uso).
-# O que e versionado: data/metadata.csv (proveniencia) e data/*.jsonl (legendas).
+# Originais ficam fora do versionamento (peso: ~300 MB, arquivos de ate 20 MB).
+# Versionado: data/images/ (normalizadas, <= 1024 px, ~18 MB — preserva o dataset se as
+# fontes sairem do ar), data/metadata.csv + data/sources/ (proveniencia e licenca) e
+# data/*.jsonl (legendas).
 data/raw/
-data/images/
 results/*.jsonl
 
 # Modelos treinados, modelos minusculos do smoke test e checkpoints (grandes)

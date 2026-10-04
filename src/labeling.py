@@ -12,6 +12,10 @@ Uso:
 
 Requer a variavel de ambiente indicada em labeling.api_key_env (ANTHROPIC_API_KEY).
 Retomavel: imagens ja rotuladas sao puladas (use --redo para regerar).
+
+Cada linha grava `prompt_versao` (hash de src/prompts.py): todas as referencias do
+experimento devem ter a mesma versao. Se o prompt mudar, o comando avisa quais linhas
+estao em versao antiga — regere-as com --redo.
 """
 from __future__ import annotations
 
@@ -24,7 +28,7 @@ from pathlib import Path
 
 from .common import append_jsonl, index_by, list_images, read_jsonl
 from .config import Config, resolve_path
-from .prompts import SYSTEM_PROMPT, USER_PROMPT
+from .prompts import PROMPT_VERSAO, SYSTEM_PROMPT, USER_PROMPT
 
 # Fallback do lado do servidor: se um classificador recusar a requisicao, a API
 # reroteia para outro modelo em vez de devolver stop_reason="refusal".
@@ -109,11 +113,27 @@ class ClaudeLabeler:
         return payload
 
 
+def versoes_desatualizadas(rows: list[dict]) -> list[str]:
+    """image_ids rotulados com outra versao do prompt (ou sem versao registrada)."""
+    return [r["image_id"] for r in rows if r.get("prompt_versao") != PROMPT_VERSAO]
+
+
+def avisar_versoes(rows: list[dict]) -> None:
+    antigas = versoes_desatualizadas(rows)
+    if antigas:
+        amostra = ", ".join(antigas[:10]) + (" ..." if len(antigas) > 10 else "")
+        print(f"ATENCAO: {len(antigas)} de {len(rows)} rotulos foram gerados com outra versao do prompt "
+              f"(atual: {PROMPT_VERSAO}): {amostra}. Regere com `python -m src label --redo` "
+              "para manter as referencias homogeneas.")
+
+
 def run(cfg: Config, redo: bool = False) -> None:
     images_dir = resolve_path(cfg, "images_dir")
     out = resolve_path(cfg, "labels_jsonl")
     lab = cfg.labeling
 
+    if not redo:
+        avisar_versoes(read_jsonl(out))
     ja_feitos = set() if redo else set(index_by(read_jsonl(out)))
     pendentes = [p for p in list_images(images_dir) if p.stem not in ja_feitos]
     if lab.limit:
@@ -146,6 +166,7 @@ def run(cfg: Config, redo: bool = False) -> None:
                 "objetos": payload["objetos"],
                 "fora_de_dominio": payload["fora_de_dominio"],
                 "observacao": payload["observacao"],
+                "prompt_versao": PROMPT_VERSAO,
                 "rotulado_em": dt.datetime.now().isoformat(timespec="seconds"),
             },
         )

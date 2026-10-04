@@ -10,7 +10,9 @@ quais cuidados valem registrar na monografia. A implementação está em `src/vl
 
 Todas as legendas de referência são geradas pelo **Claude** (`labeling.model`, padrão
 `claude-opus-5-5`) com o glossário portuário no *system prompt* (`src/prompts.py`) e saída
-estruturada: 3 legendas por imagem, objetos visíveis e uma flag de fora-do-domínio.
+estruturada: 3 legendas por imagem, objetos visíveis e uma flag de fora-do-domínio. Por que o
+prompt tem o foco técnico atual (operação + equipamentos, sem cor, luz ou nomes) e o que isso
+muda na avaliação: [`prompt-rotulagem.md`](prompt-rotulagem.md).
 
 Essas legendas têm dois papéis:
 
@@ -101,8 +103,10 @@ memória do LLM de ~3,4 GB para ~1 GB. Pergunta que responde: *a quantização c
 
 ### gold — o teto externo
 
-Um VLM grande via API (padrão: Gemini Pro, `gold_model.model`) legenda o teste com o mesmo
-glossário do rotulador (`gold_model.use_domain_prompt`). Como é de outro fornecedor, é avaliado
+Um VLM grande via API (padrão: Gemini Pro, `gold_model.model`) legenda o teste com a **mesma
+instrução de tarefa das variantes Qwen** (`model.instruction`) e, a mais, o glossário e as regras
+do rotulador como *system prompt* (`gold_model.use_domain_prompt`) — ver
+[`prompt-rotulagem.md`](prompt-rotulagem.md#42-mesma-especificação-para-todos-os-modelos-avaliados). Como é de outro fornecedor, é avaliado
 contra as referências do Claude sem circularidade. Mostra a distância entre o SLM ajustado e um
 modelo de fronteira.
 

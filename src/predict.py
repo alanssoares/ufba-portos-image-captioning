@@ -34,7 +34,7 @@ class GeminiCaptioner:
         from google import genai
         from google.genai import types
 
-        from .prompts import GOLD_INSTRUCTION, GOLD_INSTRUCTION_SEM_DOMINIO, SYSTEM_PROMPT
+        from .prompts import GOLD_FORMATO, GOLD_SYSTEM_PROMPT
 
         g = cfg.gold_model
         chave = os.environ.get(g.api_key_env) or os.environ.get("GOOGLE_API_KEY")
@@ -43,14 +43,16 @@ class GeminiCaptioner:
         self.client = genai.Client(api_key=chave)
         self.types = types
         self.name = g.model
-        self.instrucao = GOLD_INSTRUCTION if g.use_domain_prompt else GOLD_INSTRUCTION_SEM_DOMINIO
+        # Mesma instrucao de tarefa das variantes Qwen (model.instruction): a unica diferenca
+        # entre gold e SLM e o system prompt de dominio (glossario + regras), se ligado.
+        self.instrucao = f"{' '.join(str(cfg.model.instruction).split())} {GOLD_FORMATO}"
         extra = {}
         if g.get("temperature") is not None:
             extra["temperature"] = float(g.temperature)
         if g.get("max_output_tokens"):
             extra["max_output_tokens"] = int(g.max_output_tokens)
         self.config = types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT if g.use_domain_prompt else None, **extra
+            system_instruction=GOLD_SYSTEM_PROMPT if g.use_domain_prompt else None, **extra
         )
 
     def __call__(self, path: Path) -> str:
