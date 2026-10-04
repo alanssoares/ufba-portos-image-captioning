@@ -39,7 +39,8 @@ perfis em `configs/perfis/`, ajustes com `--set chave=valor`.
 
 Funciona no navegador **e no VS Code** (extensão oficial *Google Colab*: abra este `.ipynb`,
 *Select Kernel → Colab → New Colab Server* e escolha a GPU). No VS Code, os arquivos da sua
-máquina **não** aparecem no servidor — os dados chegam pelo Google Drive, como abaixo.
+máquina **não** aparecem no servidor — os dados (imagens normalizadas, `labels.jsonl`,
+`splits.json`) vêm do próprio repositório clonado, e os modelos treinados vão para o Google Drive.
 
 | GPU | perfil | fine-tuning |
 |---|---|---|
@@ -98,18 +99,18 @@ print("torch", torch.__version__, "| CUDA:", torch.cuda.is_available())
 """)
 
 md("""
-## 4. Google Drive: dados de entrada e modelos de saída
+## 4. Dados (do repositório) e Google Drive (saída)
 
-Antes de rodar, copie para o Drive a pasta `data/` da sua máquina (depois de `prepare`, `label` e
-`split` locais):
+Os **dados de entrada vêm do clone**: `data/images/` (normalizadas), `data/labels.jsonl` e
+`data/splits.json` são versionados. Rode `prepare`, rotulagem e `split` na sua máquina,
+faça commit **e push**, e o `git pull` da célula 2 traz tudo.
+
+O **Drive guarda só a saída**, que precisa sobreviver ao fim da sessão:
 
 ```
-MyDrive/ufba-portos-captioning/data/images/       imagens normalizadas
-MyDrive/ufba-portos-captioning/data/labels.jsonl  legendas do Claude
-MyDrive/ufba-portos-captioning/data/splits.json   treino/validação/teste
+MyDrive/ufba-portos-captioning/outputs/models/<variante>/   modelos treinados
+MyDrive/ufba-portos-captioning/exports/modelos.zip          pacote para a inferência local
 ```
-
-Os modelos treinados e o pacote `exports/modelos.zip` são gravados na mesma pasta.
 
 **VS Code:** se `drive.mount` falhar, rode o comando *Colab: Mount Google Drive to Server...*
 (paleta de comandos) e execute a célula de novo.
@@ -124,10 +125,13 @@ if not Path("/content/drive/MyDrive").exists():
     drive.mount("/content/drive")
 BASE.mkdir(parents=True, exist_ok=True)
 
-ARGS = f"--config configs/perfis/{PERFIL}.yaml --set paths.root={BASE}"
+ARGS = (f"--config configs/perfis/{PERFIL}.yaml"
+        f" --set paths.models_dir={BASE / 'outputs' / 'models'}"
+        f" --set paths.exports_dir={BASE / 'exports'}")
 for nome in ("data/labels.jsonl", "data/splits.json"):
-    print(f"{nome}: {'ok' if (BASE / nome).exists() else 'FALTANDO'}")
-print("imagens:", len(list((BASE / "data" / "images").glob("*.jpg"))))
+    print(f"{nome}: {'ok' if Path(nome).exists() else 'FALTANDO (faça commit e push na sua máquina)'}")
+print("imagens:", len(list(Path("data/images").glob("*.jpg"))))
+print("saída no Drive:", BASE)
 """)
 
 md("""
@@ -145,7 +149,8 @@ code("""
 md("""
 ## 6. (Opcional) Rotular e dividir aqui
 
-Só se você **não** fez isso localmente. Precisa do secret `ANTHROPIC_API_KEY` (ícone 🔑 no
+Só se você **não** fez isso localmente (o resultado fica no clone, que some com a sessão:
+copie `data/labels.jsonl` e `data/splits.json` de volta para o repositório). Precisa do secret `ANTHROPIC_API_KEY` (ícone 🔑 no
 navegador). No VS Code os Secrets do Colab podem não estar disponíveis — a célula pede a chave
 digitada (não fica salva no notebook).
 """)
