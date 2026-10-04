@@ -89,10 +89,15 @@ md("""
 ## 3. Dependências
 
 O Colab já traz PyTorch. Se pedir para reiniciar a sessão, reinicie e continue da célula 4.
+
+A célula também **remove o `torchao`** pré-instalado no Colab: o projeto não o usa (QLoRA usa
+`bitsandbytes`), mas o `peft` aborta o LoRA quando encontra uma versão antiga dele
+(`ImportError: Found an incompatible version of torchao`).
 """)
 
 code("""
 !pip install -q -r requirements.txt
+!pip uninstall -y -q torchao   # versao do Colab e incompativel com o peft; nao e usado no projeto
 
 import torch
 print("torch", torch.__version__, "| CUDA:", torch.cuda.is_available())
