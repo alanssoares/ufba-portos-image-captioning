@@ -12,7 +12,7 @@ device: null        # null = detecta (cuda > mps > cpu); force com cuda | cpu
 paths:
   root: .
   raw_dir: data/raw                 # imagens originais (fora do git)
-  images_dir: data/images           # normalizadas: psa_XXXX.jpg (fora do git)
+  images_dir: data/images           # normalizadas: psa_XXXX.jpg (versionadas)
   metadata_csv: data/metadata.csv   # proveniencia e licenca (versionado)
   commons_csv: data/sources/commons_metadata.csv  # fontes do Commons (fetch_commons_dataset)
   labels_jsonl: data/labels.jsonl   # legendas de referencia geradas pelo Claude
@@ -60,10 +60,14 @@ split:
 # ---------------------------------------------------------------------------
 model:
   model_id: Qwen/Qwen3-VL-2B-Instruct   # qualquer VLM com chat template (ex: Qwen/Qwen2.5-VL-3B-Instruct)
+  # Instrucao de TAREFA: a mesma para todas as variantes Qwen e para o gold (que recebe, a mais,
+  # so o glossario como system prompt — gold_model.use_domain_prompt). Espelha as regras das
+  # referencias (src/prompts.py): operacao + equipamentos, sem nomes, conservacao, clima ou luz.
   instruction: >-
-    Descreva esta imagem de ambiente portuário em uma única frase em português do Brasil,
-    com 12 a 30 palavras. Use termos técnicos portuários quando tiver certeza visual e não
-    invente nomes de navios, empresas ou cargas.
+    Descreva em uma única frase em português do Brasil, com 12 a 30 palavras, a operação
+    portuária visível e os equipamentos, embarcações e cargas envolvidos, usando termos técnicos
+    portuários só quando tiver certeza visual. Não cite nomes próprios nem textos legíveis e não
+    descreva estado de conservação, clima ou iluminação.
   system_prompt: null          # opcional: texto de sistema para todas as variantes
   image_max_side: 448          # lado maior da imagem entregue ao modelo (448 px ~ 196 tokens de imagem)
   response_marker: "<|im_start|>assistant\n"   # onde comeca a resposta no chat template (loss so depois)
@@ -173,7 +177,7 @@ gold_model:
   provider: gemini                 # gemini | dummy
   model: gemini-3.1-pro-preview
   api_key_env: GEMINI_API_KEY
-  use_domain_prompt: true          # mesmo glossario portuario dado ao rotulador
+  use_domain_prompt: true          # system prompt com glossario + regras do rotulador (src/prompts.py)
   temperature: null                # null = padrao do provedor
   max_output_tokens: null
   max_retries: 3

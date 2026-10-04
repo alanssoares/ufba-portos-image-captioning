@@ -104,16 +104,33 @@ citável. O `prepare` nunca sobrescreve um valor já preenchido e lista as image
 ## 3. Legendas (rótulos)
 
 Geradas pelo **Claude** (`labeling.model`, padrão `claude-opus-5-5`) com o *system prompt* de
-[`src/prompts.py`](../src/prompts.py): glossário portuário, contexto do Porto de Salvador e regras
-de escrita:
+[`src/prompts.py`](../src/prompts.py): glossário portuário (embarcações, partes do navio,
+infraestrutura, equipamentos, carga, áreas, pessoas e **ações**) e regras de escrita. O foco é
+técnico: **a operação em curso, a identificação dos objetos e a relação espacial entre eles**.
+As imagens vêm de vários portos, então o prompt não assume Salvador.
 
-1. descrever **só o que é visível** — nunca inventar nome de navio, empresa, carga ou data;
-2. termo técnico quando houver certeza visual; termo genérico quando não houver
+1. descrever **só o que é visível** — nunca inventar carga, destino ou intenção;
+2. **não citar nomes próprios nem textos legíveis** (navio, armador, terminal, códigos de
+   contêiner) — só o tipo do objeto; o que foi omitido vai para `observacao`;
+3. termo técnico quando houver certeza visual; termo genérico quando não houver
    ("guindaste portuário" em vez de "portêiner");
-3. uma frase de 12 a 30 palavras, com sujeito, ação e cenário;
-4. 3 legendas com focos diferentes (elementos, ação, enquadramento);
-5. não começar com "Uma imagem de...";
-6. marcar `fora_de_dominio` se a imagem não for portuária (essas imagens saem do split).
+4. verbo técnico para a ação; "carregamento"/"descarga" só se o sentido for visível;
+5. **não descrever** estado de conservação (ferrugem, sujeira), estética, clima, céu ou luz;
+   cor só para distinguir dois objetos do mesmo tipo;
+6. quantidades e tamanhos (20/40 pés) só com certeza visual;
+7. uma frase de 12 a 30 palavras, com sujeito, ação e local;
+8. 3 legendas com focos fixos: (1) operação principal e equipamento que a executa;
+   (2) objetos técnicos e sua relação no espaço; (3) visão geral da cena operacional;
+9. não começar com "Uma imagem de...";
+10. `objetos`: todos os elementos técnicos visíveis, termos do glossário, singular, sem cor;
+11. marcar `fora_de_dominio` se a imagem não for portuária (essas imagens saem do split).
+
+O modelo gold (Gemini) recebe o glossário e as regras comuns (1–7) como *system prompt* e a
+mesma instrução de tarefa das variantes Qwen (`model.instruction`). Cada linha do
+`labels.jsonl` grava `prompt_versao`; todas devem ter a mesma versão.
+
+Problema, discussão, decisões e impactos dessa especificação:
+[`prompt-rotulagem.md`](prompt-rotulagem.md).
 
 A saída é estruturada (JSON Schema), então todas as linhas têm o mesmo formato. Comece com
 `--set labeling.limit=5` para conferir qualidade e custo antes de rotular tudo.
@@ -161,7 +178,8 @@ A saída é estruturada (JSON Schema), então todas as linhas têm o mesmo forma
 
 | o quê | no git? | por quê |
 |---|---|---|
-| `data/raw/`, `data/images/` | não | peso e direitos de uso |
+| `data/raw/` | não | originais pesados (~300 MB, arquivos de até 20 MB); recuperáveis pelas URLs de `data/sources/` |
+| `data/images/` | **sim** | normalizadas (≤ 1024 px, ~18 MB): preservam o dataset se as fontes saírem do ar; licença de cada uma em `metadata.csv` |
 | `data/metadata.csv` | **sim** | proveniência e licença |
 | `data/sources/` | **sim** | lista de links e metadados brutos do Commons |
 | `data/labels.jsonl`, `data/splits.json` | **sim** | definem o experimento (o teste precisa ser reproduzível) |
