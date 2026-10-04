@@ -14,6 +14,7 @@ paths:
   raw_dir: data/raw                 # imagens originais (fora do git)
   images_dir: data/images           # normalizadas: psa_XXXX.jpg (fora do git)
   metadata_csv: data/metadata.csv   # proveniencia e licenca (versionado)
+  commons_csv: data/sources/commons_metadata.csv  # fontes do Commons (fetch_commons_dataset)
   labels_jsonl: data/labels.jsonl   # legendas de referencia geradas pelo Claude
   splits_json: data/splits.json     # divisao treino/validacao/teste
   models_dir: outputs/models        # uma pasta por variante (fora do git)

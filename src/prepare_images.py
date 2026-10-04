@@ -9,8 +9,11 @@ O que faz:
   - corrige orientacao EXIF, converte para RGB, redimensiona o lado maior;
   - deduplica por SHA-1 do arquivo original;
   - salva como data/images/psa_XXXX.jpg;
-  - cria/atualiza data/metadata.csv, onde as colunas de licenca devem ser
-    preenchidas a mao (fonte, url, licenca) — obrigatorio para uso academico.
+  - cria/atualiza data/metadata.csv (manifesto do pipeline, uma linha por imagem);
+  - preenche fonte/url/licenca a partir do CSV de fontes do Commons
+    (paths.commons_csv, gerado por src/fetch_commons_dataset.py), casando pelo
+    nome do arquivo. Imagens de outras fontes: preencha essas colunas a mao —
+    obrigatorio para uso academico. Valores ja preenchidos nunca sao sobrescritos.
 """
 from __future__ import annotations
 
@@ -50,7 +53,44 @@ def load_manifest(path: Path) -> list[dict[str, str]]:
     if not path.exists():
         return []
     with path.open("r", encoding="utf-8", newline="") as fh:
-        return list(csv.DictReader(fh))
+        reader = csv.DictReader(fh)
+        faltando = {"image_id", "sha1", "arquivo_origem"} - set(reader.fieldnames or [])
+        if faltando:
+            raise SystemExit(
+                f"{path} nao esta no formato do manifesto (faltam {sorted(faltando)}).\n"
+                "Se for o CSV gerado pelo download do Commons, mova-o para "
+                "data/sources/commons_metadata.csv (paths.commons_csv) e rode o prepare de novo."
+            )
+        return list(reader)
+
+
+def load_fontes(path: Path | None) -> dict[str, dict[str, str]]:
+    """CSV de fontes do Commons indexado pelo nome do arquivo (minusculo)."""
+    if path is None or not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8", newline="") as fh:
+        return {row["arquivo"].lower(): row for row in csv.DictReader(fh) if row.get("arquivo")}
+
+
+def preencher_proveniencia(row: dict[str, str], fontes: dict[str, dict[str, str]]) -> bool:
+    """Completa fonte/url/licenca vazias com o CSV de fontes. Devolve True se mudou algo."""
+    nome = row.get("arquivo_origem", "").replace("\\", "/").rsplit("/", 1)[-1]
+    fonte = fontes.get(nome.lower())
+    if not fonte:
+        return False
+    autor = fonte.get("autor", "").strip()
+    origem = fonte.get("fonte", "").strip()
+    novos = {
+        "fonte": f"{autor}, {origem}" if autor and origem else (autor or origem),
+        "url": fonte.get("url_pagina", "").strip(),
+        "licenca": fonte.get("licenca", "").strip(),
+    }
+    mudou = False
+    for campo, valor in novos.items():
+        if valor and not row.get(campo, "").strip():
+            row[campo] = valor
+            mudou = True
+    return mudou
 
 
 def save_manifest(path: Path, rows: list[dict[str, str]]) -> None:
@@ -81,6 +121,8 @@ def run(cfg: Config) -> None:
 
     dst_dir.mkdir(parents=True, exist_ok=True)
     rows = load_manifest(manifest)
+    commons_key = cfg.paths.get("commons_csv")
+    fontes = load_fontes(resolve_path(cfg, "commons_csv") if commons_key else None)
     seen = {row["sha1"]: row for row in rows}
     idx = next_index(rows)
     hoje = dt.date.today().isoformat()
@@ -112,7 +154,7 @@ def run(cfg: Config) -> None:
         row = {
             "image_id": image_id,
             "sha1": digest,
-            "arquivo_origem": str(src.relative_to(src_dir)),
+            "arquivo_origem": src.relative_to(src_dir).as_posix(),
             "largura": str(largura),
             "altura": str(altura),
             "fonte": "",
@@ -121,13 +163,19 @@ def run(cfg: Config) -> None:
             "data_coleta": hoje,
             "observacoes": "",
         }
+        preencher_proveniencia(row, fontes)
         rows.append(row)
         seen[digest] = row
         idx += 1
         novas += 1
 
+    completadas = sum(preencher_proveniencia(r, fontes) for r in rows)
+
     save_manifest(manifest, rows)
+    if fontes:
+        print(f"Proveniencia lida de {len(fontes)} registros do Commons; {completadas} linhas antigas completadas.")
     print(f"{novas} novas, {duplicadas} duplicadas ignoradas, {falhas} falhas. Total no manifesto: {len(rows)}.")
     faltando = [r["image_id"] for r in rows if not r["licenca"]]
     if faltando:
-        print(f"ATENCAO: {len(faltando)} imagens sem licenca preenchida em {manifest.name}.")
+        print(f"ATENCAO: {len(faltando)} imagens sem licenca preenchida em {manifest.name}: "
+              f"{', '.join(faltando[:10])}{' ...' if len(faltando) > 10 else ''}")

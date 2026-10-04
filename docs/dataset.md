@@ -10,11 +10,12 @@ com ☐ quando a coleta estiver pronta.
 
 ```
  fontes (fotos próprias, Wikimedia Commons, acervos com licença)
-   │
+   │   Commons: python -m src.fetch_commons_dataset data/sources/commons_links.txt
+   │            → data/raw/images/ + data/sources/commons_metadata.csv (autor, URL, licença)
    ▼  data/raw/                         arquivos originais, qualquer formato/tamanho, subpastas livres
  python -m src prepare
    │   EXIF corrigido · RGB · lado maior ≤ 1024 px · JPEG q92 · dedup por SHA-1 · ids psa_0001...
-   ▼  data/images/psa_XXXX.jpg          + data/metadata.csv (proveniência e licença — preencher à mão)
+   ▼  data/images/psa_XXXX.jpg          + data/metadata.csv (licença vem do Commons; outras fontes: à mão)
  python -m src label
    │   Claude (claude-opus-5-5) + glossário portuário · 3 legendas/imagem · objetos · fora_de_dominio
    ▼  data/labels.jsonl
@@ -75,9 +76,16 @@ prefira outra foto ou anote em `observacoes`.
 
 ### 2.4 Proveniência: `data/metadata.csv`
 
-Criado e atualizado pelo `prepare`. **As colunas `fonte`, `url` e `licenca` são preenchidas à mão**
-— sem elas o dataset não é publicável nem citável. O `prepare` avisa quantas imagens estão sem
-licença.
+Criado e atualizado pelo `prepare` — é o manifesto do pipeline (uma linha por imagem
+normalizada). As colunas `fonte`, `url` e `licenca` são preenchidas **automaticamente** para
+imagens baixadas com `src/fetch_commons_dataset.py`, a partir do
+`data/sources/commons_metadata.csv` (casando pelo nome do arquivo em `data/raw/`). Para fotos
+próprias e outros acervos, **preencha-as à mão** — sem elas o dataset não é publicável nem
+citável. O `prepare` nunca sobrescreve um valor já preenchido e lista as imagens sem licença.
+
+> Não confunda os dois CSVs: `data/sources/commons_metadata.csv` é a saída bruta do download
+> (uma linha por arquivo do Commons, com autor, termos de uso, SHA-256...);
+> `data/metadata.csv` é o manifesto com os ids `psa_XXXX` que o resto do pipeline usa.
 
 | coluna | preenchida por | conteúdo |
 |---|---|---|
@@ -86,9 +94,9 @@ licença.
 | `arquivo_origem` | `prepare` | caminho relativo em `data/raw/` |
 | `largura`, `altura` | `prepare` | após o redimensionamento |
 | `data_coleta` | `prepare` | data do processamento |
-| `fonte` | **você** | autor / acervo (ex: "Fulano de Tal, Wikimedia Commons") |
-| `url` | **você** | página de origem |
-| `licenca` | **você** | ex: `CC BY-SA 4.0`, `CC BY 4.0`, `domínio público`, `própria` |
+| `fonte` | `prepare` (Commons) ou **você** | autor / acervo (ex: "Fulano de Tal, Wikimedia Commons") |
+| `url` | `prepare` (Commons) ou **você** | página de origem |
+| `licenca` | `prepare` (Commons) ou **você** | ex: `CC BY-SA 4.0`, `CC BY 4.0`, `domínio público`, `própria` |
 | `observacoes` | **você** | qualquer ressalva |
 
 ---
@@ -155,6 +163,7 @@ A saída é estruturada (JSON Schema), então todas as linhas têm o mesmo forma
 |---|---|---|
 | `data/raw/`, `data/images/` | não | peso e direitos de uso |
 | `data/metadata.csv` | **sim** | proveniência e licença |
+| `data/sources/` | **sim** | lista de links e metadados brutos do Commons |
 | `data/labels.jsonl`, `data/splits.json` | **sim** | definem o experimento (o teste precisa ser reproduzível) |
 | `outputs/`, `exports/` | não | modelos (GBs) |
 
