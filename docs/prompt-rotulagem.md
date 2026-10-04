@@ -100,7 +100,9 @@ O prompt foi reorganizado em blocos reutilizáveis:
 - Cada linha do `labels.jsonl` grava `prompt_versao`.
 - `python -m src label` avisa quantas linhas estão em versão diferente da atual e sugere
   `--redo`.
-- Versão em uso nesta rodada: **`09101c626775`**.
+- Versão em uso nesta rodada: **`09101c626775`** (referências). A versão atual do texto é
+  **`13af93f76e18`**, ortograficamente equivalente (seção 4.5); as duas são aceitas
+  (`VERSOES_COMPATIVEIS`), sem `--redo`.
 
 ### 4.4 Antes e depois
 
@@ -108,6 +110,30 @@ O prompt foi reorganizado em blocos reutilizáveis:
 |---|---|---|
 | `psa_0002` | Spreader vermelho de um guindaste portuário encaixa-se sobre o teto de um contêiner marrom **enferrujado**, ao lado de um contêiner refrigerado branco. | Spreader de um guindaste portuário encaixa-se sobre o teto de um contêiner empilhado durante a movimentação de contêineres. |
 | `psa_0005` | Navio porta-contêineres carregado está atracado junto a **quatro** portêineres de lanças erguidas, enquanto um rebocador encosta no seu costado **com luz de fim de tarde**. | Navio porta-contêineres carregado permanece atracado ao cais junto a portêineres com lanças erguidas, enquanto um rebocador encosta no seu costado. |
+
+### 4.5 Correção posterior: grafia do prompt (out/2026)
+
+**Problema.** O texto do prompt (glossário e regras) estava escrito **sem acentos**, no estilo do
+código, e com as grafias "portainer" e "transtainer". As referências, por outro lado, estão em
+português acentuado ("contêiner", "convés", "portêiner"). Na primeira rodada do gold, 6 de 10
+legendas do Gemini copiaram a grafia do glossário ("porta-conteineres", "conves", "portainer"),
+e para BLEU/CIDEr "conteineres" e "contêineres" são palavras diferentes. O gold seria penalizado
+por ortografia, não pela descrição.
+
+**Correção.** O texto foi acentuado e as duas grafias foram alinhadas às referências
+("portêiner", "transtêiner"), **sem mudar nenhuma regra**. Isso foi verificado: removendo os
+acentos (e revertendo as duas grafias), cada bloco do prompt é idêntico ao anterior.
+
+**Impacto.**
+
+- **Referências:** não mudam. Foram escritas acentuadas desde o início (0 de 297 sem acento).
+  A versão anterior (`09101c626775`) foi declarada equivalente em `VERSOES_EQUIVALENTES`.
+- **Variantes Qwen:** não mudam e não precisam ser re-treinadas. Elas não recebem o glossário,
+  só os labels e o `model.instruction`, que já estava acentuado.
+- **Gold:** regerado por completo. Cada linha de `results/preds_gold.jsonl` passa a gravar a
+  versão da especificação que recebeu (modelo + system prompt + instrução); linhas de outra
+  versão contam como pendentes, então as 10 legendas da primeira rodada são refeitas
+  automaticamente e o gold nunca fica com versões misturadas.
 
 ## 5. Como as referências desta rodada foram geradas
 
@@ -193,8 +219,9 @@ Critérios adotados durante a rotulagem:
 |---|---|
 | `src/prompts.py` | glossário ampliado; prioridades; regras comuns × regras de rotulagem; `GOLD_SYSTEM_PROMPT`; `PROMPT_VERSAO` |
 | `src/labeling.py` | grava `prompt_versao`; avisa sobre versões misturadas |
-| `src/predict.py` | gold usa `model.instruction` + `GOLD_SYSTEM_PROMPT` |
+| `src/predict.py` | gold usa `model.instruction` + `GOLD_SYSTEM_PROMPT`; grava a versão da especificação; respeita o limite por minuto e para na cota diária |
 | `configs/default.yaml` | nova `model.instruction` (compartilhada por Qwen e gold) |
-| `tests/test_prompts.py` | testes de versão, separação das regras e instrução |
+| `tests/test_prompts.py` | testes de versão, separação das regras, instrução e grafia acentuada |
+| `tests/test_gold.py` | retomada do gold por versão e parada na cota diária |
 | `docs/dataset.md`, `docs/metodologia-variantes.md`, `README.md` | regras de rotulagem e do gold atualizadas, com link para este documento |
 | `data/labels.jsonl` | referências na versão `09101c626775` |

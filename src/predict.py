@@ -88,10 +88,14 @@ GOLD_PROVIDERS = {"gemini": GeminiCaptioner, "dummy": DummyCaptioner}
 
 
 # ---------------------------------------------------------------------------
-def _pendentes(cfg: Config, out: Path, redo: bool) -> list[Path]:
+def _pendentes(cfg: Config, out: Path, redo: bool, versao: str | None = None) -> list[Path]:
+    """Imagens do split ainda sem predicao. Com `versao`, linhas de outra versao contam como pendentes."""
     split = cfg.generation.split
     images_dir = resolve_path(cfg, "images_dir")
-    feitos = set() if redo else set(index_by(read_jsonl(out)))
+    linhas = index_by(read_jsonl(out))
+    if versao is not None:
+        linhas = {k: r for k, r in linhas.items() if r.get("prompt_versao") == versao}
+    feitos = set() if redo else set(linhas)
     caminhos = []
     for image_id in load_split(cfg, split):
         if image_id in feitos:
@@ -104,34 +108,67 @@ def _pendentes(cfg: Config, out: Path, redo: bool) -> list[Path]:
     return caminhos
 
 
+def gold_versao(cfg: Config) -> str:
+    """Versao da especificacao recebida pelo gold: modelo + system prompt + instrucao."""
+    from .prompts import GOLD_FORMATO, GOLD_SYSTEM_PROMPT, versao
+
+    g = cfg.gold_model
+    sistema = GOLD_SYSTEM_PROMPT if g.use_domain_prompt else ""
+    return versao(str(g.provider), str(g.model), sistema, " ".join(str(cfg.model.instruction).split()), GOLD_FORMATO)
+
+
+def cota_diaria_esgotada(exc: Exception) -> bool:
+    """429 da cota DIARIA: tentar de novo antes do reset so desperdica chamadas."""
+    texto = str(exc)
+    return "RESOURCE_EXHAUSTED" in texto and "PerDay" in texto
+
+
 def predict_gold(cfg: Config, redo: bool = False) -> Path:
     out = resolve_path(cfg, "results_dir") / "preds_gold.jsonl"
-    caminhos = _pendentes(cfg, out, redo)
+    versao_atual = gold_versao(cfg)
+    caminhos = _pendentes(cfg, out, redo, versao=versao_atual)
     if not caminhos:
-        print("gold: nada a fazer.")
+        print(f"gold: nada a fazer (todas as imagens na versao {versao_atual}).")
         return out
     g = cfg.gold_model
     if g.provider not in GOLD_PROVIDERS:
         raise SystemExit(f"gold_model.provider '{g.provider}' desconhecido. Use: {', '.join(GOLD_PROVIDERS)}")
     captioner = GOLD_PROVIDERS[g.provider](cfg)
-    print(f"gold ({captioner.name}) sobre {len(caminhos)} imagens -> {out}")
-    erros = 0
+    intervalo = float(g.get("min_interval_s") or 0) if g.provider != "dummy" else 0.0
+    print(f"gold ({captioner.name}, versao {versao_atual}) sobre {len(caminhos)} imagens -> {out}")
+    erros, ultima, interrompido = 0, 0.0, False
     for i, path in enumerate(caminhos, 1):
         legenda = None
         t0 = time.perf_counter()
         for tentativa in range(1, int(g.max_retries) + 1):
+            espera = intervalo - (time.monotonic() - ultima)
+            if espera > 0:
+                time.sleep(espera)   # respeita o limite de requisicoes por minuto
+            ultima = time.monotonic()
             try:
                 legenda = captioner(path)
                 break
             except Exception as exc:
                 print(f"  [{i}] {path.stem}: tentativa {tentativa} falhou — {exc}")
+                if cota_diaria_esgotada(exc):
+                    interrompido = True
+                    break
                 time.sleep(float(g.retry_wait_s) * tentativa)
+        if interrompido:
+            break
         if legenda is None:
             erros += 1
             continue
-        append_jsonl(out, {"image_id": path.stem, "variante": "gold", "modelo": captioner.name, "legenda": legenda, "segundos": time.perf_counter() - t0})
+        append_jsonl(out, {"image_id": path.stem, "variante": "gold", "modelo": captioner.name,
+                           "prompt_versao": versao_atual, "legenda": legenda,
+                           "segundos": time.perf_counter() - t0})
         print(f"  [{i}/{len(caminhos)}] {path.stem}: {legenda}")
-    print(f"gold: pronto. Erros: {erros}.")
+    faltam = len(_pendentes(cfg, out, False, versao=versao_atual))
+    if interrompido:
+        print(f"gold: INTERROMPIDO — cota diaria esgotada. Faltam {faltam} imagens; "
+              "rode o mesmo comando depois do reset (continua de onde parou).")
+    else:
+        print(f"gold: pronto. Erros: {erros}. Faltam: {faltam}.")
     return out
 
 

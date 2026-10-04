@@ -28,7 +28,7 @@ from pathlib import Path
 
 from .common import append_jsonl, index_by, list_images, read_jsonl
 from .config import Config, resolve_path
-from .prompts import PROMPT_VERSAO, SYSTEM_PROMPT, USER_PROMPT
+from .prompts import PROMPT_VERSAO, SYSTEM_PROMPT, USER_PROMPT, VERSOES_COMPATIVEIS
 
 # Fallback do lado do servidor: se um classificador recusar a requisicao, a API
 # reroteia para outro modelo em vez de devolver stop_reason="refusal".
@@ -114,8 +114,11 @@ class ClaudeLabeler:
 
 
 def versoes_desatualizadas(rows: list[dict]) -> list[str]:
-    """image_ids rotulados com outra versao do prompt (ou sem versao registrada)."""
-    return [r["image_id"] for r in rows if r.get("prompt_versao") != PROMPT_VERSAO]
+    """image_ids rotulados com versao incompativel do prompt (ou sem versao registrada).
+
+    Versoes so ortograficamente diferentes (prompts.VERSOES_EQUIVALENTES) sao compativeis.
+    """
+    return [r["image_id"] for r in rows if r.get("prompt_versao") not in VERSOES_COMPATIVEIS]
 
 
 def avisar_versoes(rows: list[dict]) -> None:

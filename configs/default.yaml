@@ -182,8 +182,9 @@ gold_model:
   use_domain_prompt: true          # system prompt com glossario + regras do rotulador (src/prompts.py)
   temperature: null                # null = padrao do provedor
   max_output_tokens: null
-  max_retries: 3
-  retry_wait_s: 5
+  max_retries: 4
+  retry_wait_s: 20                 # espera x tentativa (503 de sobrecarga costuma durar dezenas de segundos)
+  min_interval_s: 13               # >= 60 / limite por minuto (nivel gratuito do Flash: 5 RPM)
 
 # ---------------------------------------------------------------------------
 # 8. Comparacao
