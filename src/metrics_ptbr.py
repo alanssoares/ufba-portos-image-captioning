@@ -71,20 +71,25 @@ def bertscore_pt(
     device: str | None = None,
 ) -> dict[str, float]:
     """BERTScore multi-referencia com BERTimbau (fica o melhor par entre as refs)."""
-    from bert_score import score as bert_score
+    from bert_score import BERTScorer
 
     chaves = list(hyps)
     cands = [hyps[k] for k in chaves]
     referencias = [refs[k] for k in chaves]
-    P, R, F1 = bert_score(
-        cands,
-        referencias,
+
+    scorer = BERTScorer(
         model_type=model_type,
         num_layers=num_layers,
         device=device,
-        verbose=False,
         rescale_with_baseline=False,
     )
+    # O tokenizador do BERTimbau nao declara model_max_length (vira ~1e30) e o `tokenizers`
+    # novo estoura ao truncar com esse valor. BERT-base aceita no maximo 512 tokens.
+    tok = scorer._tokenizer
+    if tok.model_max_length > 512:
+        tok.model_max_length = 512
+
+    P, R, F1 = scorer.score(cands, referencias, verbose=False)
     return {
         "BERTScore-P": float(P.mean()),
         "BERTScore-R": float(R.mean()),
