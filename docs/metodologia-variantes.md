@@ -123,6 +123,18 @@ o modelo Pro não tem cota no nível gratuito da API do Gemini (`limit: 0`, erro
   `python -m src predict --variant gold --redo --set gold_model.model=gemini-3.1-pro-preview`;
   o nome do modelo usado fica gravado em cada linha de `results/preds_gold.jsonl` (campo `modelo`).
 
+**Tempo do gold não entra na comparação de custo.** A latência do gold é a de uma API remota:
+depende da rede, da carga do servidor e, no nível gratuito, de esperas impostas pela cota
+(5 requisições por minuto) e de novas tentativas quando o modelo responde `503` por excesso de
+demanda. Não é comparável ao tempo de inferência das variantes locais, medido na mesma GPU.
+Por isso:
+
+- cada linha de `preds_gold.jsonl` grava `segundos` (só a chamada que deu certo, usada no
+  `s/img`), `segundos_total` (com espaçamento e novas tentativas) e `tentativas`;
+- na rodada de out/2026, o tempo foi gravado **com** as esperas (4 a 215 s por imagem, quase
+  tudo espera), e foi movido para `segundos_com_espera`: o gold aparece sem `s/img` no
+  `comparativo.md`. As legendas não foram afetadas — só dependem de imagem, prompt e modelo.
+
 ## 4. Comparabilidade — o que é mantido fixo
 
 - mesmos splits (`data/splits.json`, estável entre execuções; cada variante registra a
