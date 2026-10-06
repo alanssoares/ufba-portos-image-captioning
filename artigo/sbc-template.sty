@@ -1,0 +1,77 @@
+% sbc-template.sty -- reimplementacao do modelo de artigos da SBC
+% (Sociedade Brasileira de Computacao). Segue as regras do modelo oficial:
+% A4, margens 3,5 cm (sup.), 2,5 cm (inf.), 3 cm (esq./dir.), Times 12 pt,
+% titulo 16 pt negrito, secoes 13 pt negrito numeradas "1.", recuo de 1,27 cm
+% e 6 pt apos cada paragrafo, resumo/abstract em italico com recuo de 0,8 cm.
+% Se tiver o sbc-template.sty oficial, basta substituir este arquivo.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{sbc-template}[2026/10/06 SBC article template (reimplementacao)]
+
+\RequirePackage[a4paper,top=3.5cm,bottom=2.5cm,left=3cm,right=3cm,
+  footskip=1cm]{geometry}
+\RequirePackage{mathptmx}
+\RequirePackage[scaled=0.92]{helvet}
+\RequirePackage{courier}
+
+\setlength{\parindent}{1.27cm}
+\setlength{\parskip}{6pt}
+\pagestyle{empty}
+
+% ---- titulo, autores, enderecos -----------------------------------------
+\def\@address{}
+\def\@email{}
+\newcommand{\address}[1]{\gdef\@address{#1}}
+\newcommand{\email}[1]{\gdef\@email{#1}}
+\renewcommand{\maketitle}{%
+  \begin{center}
+    {\fontsize{16}{20}\selectfont\bfseries \@title\par}
+    \vspace{12pt}
+    {\fontsize{12}{14}\selectfont\bfseries \@author\par}
+    \vspace{12pt}
+    {\fontsize{12}{14}\selectfont \@address\par}
+    \vspace{2pt}
+    {\fontsize{10}{12}\selectfont\ttfamily \@email\par}
+  \end{center}
+  \vspace{6pt}%
+  \thispagestyle{empty}}
+
+% ---- abstract / resumo ----------------------------------------------------
+\renewenvironment{abstract}{%
+  \list{}{\leftmargin=0.8cm\rightmargin=0.8cm\listparindent=0pt
+          \itemindent=0pt\parsep=6pt}%
+  \item\relax\itshape\textbf{Abstract.}\ }{\endlist}
+\newenvironment{resumo}{%
+  \list{}{\leftmargin=0.8cm\rightmargin=0.8cm\listparindent=0pt
+          \itemindent=0pt\parsep=6pt}%
+  \item\relax\itshape\textbf{Resumo.}\ }{\endlist}
+
+% ---- secoes ---------------------------------------------------------------
+\renewcommand{\@seccntformat}[1]{\csname the#1\endcsname.\hspace{0.5em}}
+\renewcommand{\section}{\@startsection{section}{1}{0pt}%
+  {12pt}{0.1pt}{\normalfont\fontsize{13}{15}\selectfont\bfseries}}
+\renewcommand{\subsection}{\@startsection{subsection}{2}{0pt}%
+  {12pt}{0.1pt}{\normalfont\fontsize{12}{14}\selectfont\bfseries}}
+\renewcommand{\subsubsection}{\@startsection{subsubsection}{3}{0pt}%
+  {12pt}{0.1pt}{\normalfont\fontsize{12}{14}\selectfont\bfseries}}
+
+% ---- legendas: 10 pt negrito, centralizadas -------------------------------
+\long\def\@makecaption#1#2{%
+  \vskip 6pt
+  \sbox\@tempboxa{\fontsize{10}{12}\selectfont\bfseries #1. #2}%
+  \ifdim\wd\@tempboxa>\hsize
+    {\fontsize{10}{12}\selectfont\bfseries #1. #2\par}
+  \else\hbox to\hsize{\hfil\box\@tempboxa\hfil}\fi
+  \vskip 6pt}
+
+% ---- referencias: titulo "Referencias", rotulos [Autor Ano] ---------------
+\renewenvironment{thebibliography}[1]{%
+  \section*{\refname}%
+  \fontsize{12}{14}\selectfont
+  \list{}{\leftmargin=0.5cm\itemindent=-0.5cm\itemsep=4pt\parsep=0pt
+          \usecounter{enumiv}\let\makelabel\@gobble}%
+  \sloppy\clubpenalty4000\widowpenalty4000\sfcode`\.\@m}{\endlist}
+\def\@lbibitem[#1]#2{\item\if@filesw{\let\protect\noexpand
+  \immediate\write\@auxout{\string\bibcite{#2}{#1}}}\fi\ignorespaces}
+% \citeasnoun{chave}: rotulo sem colchetes, para citacao no texto
+\DeclareRobustCommand{\citeasnoun}[1]{\@ifundefined{b@#1}{\textbf{?}}{\csname b@#1\endcsname}}
+\endinput
