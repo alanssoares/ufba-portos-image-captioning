@@ -145,10 +145,11 @@ podem ser úteis (sem substituir as métricas gerais acima, que continuam sendo 
   legendas de referência por imagem, métricas que não dependem de referências (CLIPScore) ajudam a
   avaliar legendas mesmo com poucos exemplos anotados manualmente.
 - **Contexto de cena vs. detalhe técnico**: decidir, na avaliação, se o objetivo é legendas mais
-  gerais ("navio atracado em um porto") ou mais técnicas ("navio porta-contêineres atracado no
-  Tecon Salvador, com portêiner ao lado") — o nível de granularidade esperado deve ser refletido
+  gerais ("navio atracado em um porto") ou mais técnicas ("navio porta-contêineres atracado ao
+  cais, sob um portêiner") — o nível de granularidade esperado deve ser refletido
   também na forma como as legendas de referência foram escritas, para que a comparação automática
-  faça sentido.
+  faça sentido. Neste projeto a decisão foi pelo nível **técnico, sem nomes próprios**
+  (ver [`prompt-rotulagem.md`](prompt-rotulagem.md)).
 
 ---
 
@@ -156,7 +157,8 @@ podem ser úteis (sem substituir as métricas gerais acima, que continuam sendo 
 
 Para um projeto acadêmico como este, uma combinação razoável costuma ser:
 
-1. **BLEU-4, METEOR, ROUGE-L e CIDEr** — para comparabilidade com a literatura de captioning.
+1. **BLEU-4, METEOR, ROUGE-L e CIDEr** — para comparabilidade com a literatura de captioning
+   (neste projeto, METEOR ficou de fora; ver seção 9).
 2. **CLIPScore** — como métrica adicional independente de referências, útil dado o volume
    pequeno/moderado de dados.
 3. **Análise de erro qualitativa em amostra** — inspeção manual de um subconjunto de legendas
@@ -164,7 +166,117 @@ Para um projeto acadêmico como este, uma combinação razoável costuma ser:
 
 ---
 
-## 9. Fontes e leitura complementar
+## 9. Métricas usadas neste projeto (como ler o `comparativo.md`)
+
+As seções anteriores são conceituais. Esta descreve **exatamente o que o código calcula**
+(`src/metrics_ptbr.py`, chamado por `python -m src evaluate`) e como interpretar cada coluna
+de `results/comparativo.md` neste experimento.
+
+### 9.1 Antes das métricas: como o texto é preparado
+
+As métricas de n-gramas não comparam o texto bruto. Gerada e referências passam pela mesma
+tokenização (`tokenize_pt`):
+
+1. normalização Unicode (NFC) e **minúsculas**;
+2. **hífen vira espaço** ("porta-contêineres" → "porta contêineres");
+3. pontuação removida;
+4. **acentos mantidos**.
+
+Consequência prática: "contêineres" e "conteineres" (ou "contêiners") são **palavras diferentes**
+para BLEU, ROUGE-L e CIDEr. Um erro de grafia custa como uma palavra errada — foi por isso que o
+prompt do gold precisou ser acentuado (ver [`prompt-rotulagem.md`](prompt-rotulagem.md), seção 4.5).
+
+Não usamos o `PTBTokenizer` do `pycocoevalcap` porque ele chama o Stanford CoreNLP (Java) e foi
+feito para o inglês.
+
+### 9.2 Coluna por coluna
+
+Cada imagem de teste tem **3 referências** (os 3 focos: operação, objetos, visão geral); cada
+modelo gera **1 legenda** por imagem. `N` é o número de imagens avaliadas.
+
+| coluna | o que mede | como é calculada aqui | faixa | maior é melhor? |
+|---|---|---|---|---|
+| **N** | imagens avaliadas | imagens do split de teste com predição e referência | — | — |
+| **BLEU-1** | precisão de palavras isoladas em relação às referências | `pycocoevalcap`, nível de corpus (contagens somadas em todas as imagens), contagem limitada pelo máximo entre as 3 referências, com penalidade de brevidade | 0 a 1 | sim |
+| **BLEU-4** | precisão de sequências de até 4 palavras (média geométrica de 1- a 4-gramas) | idem | 0 a 1 | sim |
+| **ROUGE-L** | maior subsequência comum (ordem das palavras, sem exigir contiguidade) | `pycocoevalcap`, F-measure com β = 1,2 (pesa mais o recall), melhor referência por imagem, média nas imagens | 0 a 1 | sim |
+| **CIDEr** | consenso com as referências, por n-gramas de 1 a 4 ponderados por TF-IDF | `pycocoevalcap` (`Cider`, não o CIDEr-D), **IDF calculado nas próprias imagens de teste**, escala ×10 | 0 a ~10 (na prática 0 a ~1,5) | sim |
+| **BERTScore-F1** | similaridade semântica entre a legenda e a referência mais próxima | BERTimbau (`neuralmind/bert-base-portuguese-cased`), camada 9, **sem reescala por baseline**, melhor referência por imagem | ~0,5 a 1 (valores comprimidos) | sim |
+| **CLIPScore** | alinhamento entre a **imagem** e a legenda, **sem usar referência** | `2,5 × max(cos(imagem, legenda), 0)`; imagem no CLIP ViT-B/32, texto no encoder multilíngue destilado (`clip-ViT-B-32-multilingual-v1`) | 0 a 2,5 (na prática ~0,6 a 0,9) | sim, com ressalva (9.4) |
+| **RefCLIPScore** | combina o CLIPScore com a similaridade da legenda às referências | média harmônica entre o CLIPScore e a maior similaridade de cosseno legenda × referência (encoder de texto multilíngue) | 0 a ~1,4 | sim |
+| **Distinct-1** | variedade de vocabulário entre todas as legendas do modelo | palavras únicas ÷ total de palavras, somando as 15 legendas | 0 a 1 | depende (9.3) |
+| **Distinct-2** | variedade de pares de palavras | bigramas únicos ÷ total de bigramas | 0 a 1 | depende (9.3) |
+| **Tam.medio** | tamanho médio das legendas | média de palavras (após a tokenização) por legenda | — | o ideal é ficar perto das referências (~20,5) |
+
+Não calculamos **METEOR** nem **SPICE**: ambos dependem de Java, e o METEOR usa o WordNet em
+inglês — em PT-BR o ganho não compensa.
+
+### 9.3 Como ler as famílias de métricas
+
+**Sobreposição de palavras (BLEU, ROUGE-L, CIDEr).** Medem o quanto o modelo escreve *como as
+referências*. São sensíveis a vocabulário e grafia: acertar "portêiner" vale, escrever "guindaste
+grande" ou "portêinê" não vale, mesmo que a cena esteja certa. O BLEU-4 é baixo em captioning
+em geral (bons modelos ficam em torno de 0,2 a 0,4 nos benchmarks em inglês, como o COCO) e ainda mais aqui, com referências técnicas
+e 3 focos diferentes.
+
+**Semântica (BERTScore).** Dá crédito a sinônimos e paráfrases. Sem a reescala por baseline,
+todos os valores ficam numa faixa estreita (0,65 a 0,79 neste experimento): diferenças de
+0,02 a 0,05 já são relevantes.
+
+**Imagem × texto (CLIPScore, RefCLIPScore).** Não dependem só das referências — avaliam se o
+texto "combina" com a imagem. Ver a ressalva importante abaixo.
+
+**Diversidade (Distinct-1/2) e tamanho.** Servem para detectar um modelo que repete sempre a
+mesma frase genérica (Distinct baixo). Não são métricas de qualidade: neste experimento,
+todas as variantes têm Distinct parecido (~0,33 / ~0,67), ou seja, nenhuma colapsou. O tamanho
+médio mostra se o modelo respeita a regra de 12 a 30 palavras e o estilo das referências.
+
+### 9.4 Cuidados específicos deste experimento
+
+1. **CIDEr instável com N pequeno.** O IDF é calculado sobre as 15 imagens de teste: uma palavra
+   rara em 15 legendas ganha peso alto por acaso. Compare variantes entre si, nunca com valores
+   da literatura, e reporte sempre o N.
+
+2. **O CLIPScore premia o que a especificação proíbe.** No comparativo de out/2026, o `base`
+   (zero-shot) teve o **maior** CLIPScore (0,81), acima das variantes treinadas (0,66 a 0,72) e do
+   gold (0,71). Os exemplos mostram por quê: o `base` descreve **cor** ("gancho vermelho"),
+   **marcas e textos legíveis** ("Taylor 9975C", "Delmas", "Maersk") e **céu/clima** — tudo
+   visualmente bem ancorado e premiado pelo CLIP, mas proibido pela definição técnica da tarefa
+   (ver [`prompt-rotulagem.md`](prompt-rotulagem.md)). Além disso, jargão como "portêiner" e
+   "spreader" em português é pouco representado no encoder multilíngue. Neste projeto, portanto,
+   o CLIPScore mede em parte **aderência visual genérica**, não aderência à tarefa: use-o como
+   sinal complementar, e leia a divergência com as métricas de referência como evidência da
+   troca descrita em `prompt-rotulagem.md`, seção 3.2.
+
+3. **As métricas de referência medem proximidade ao rotulador.** As referências são do Claude;
+   um modelo que escreve parecido com ele pontua mais. O gold tem vantagem adicional por receber
+   o mesmo glossário. Ver as limitações em [`prompt-rotulagem.md`](prompt-rotulagem.md), seção 7.
+
+4. **Uma execução, 15 imagens.** Diferenças pequenas (ex: `lora` × `qlora`) estão dentro do ruído.
+   Os números absolutos variam com o sorteio das imagens de teste e com a semente do treino; só
+   diferenças grandes e consistentes entre métricas (ex: `base` → `lora`/`qlora` → `gold`) devem
+   ser tratadas como resultado.
+
+5. **Tempo (`s/img`).** Para as variantes locais, mede a inferência na mesma máquina. Para o gold
+   (API remota), a latência não é comparável e fica fora da tabela — ver
+   [`metodologia-variantes.md`](metodologia-variantes.md).
+
+### 9.5 Leitura resumida do comparativo de out/2026
+
+- Nas métricas de referência (BLEU-4, ROUGE-L, CIDEr, BERTScore) a ordem é a mesma:
+  `base` < `pretrain` < `finetune` < `lora` ≈ `qlora` < `gold`.
+- `lora` e `qlora` superam o `finetune` completo, coerente com a val loss do treino
+  ([`../results/treino_custos.md`](../results/treino_custos.md)): com 68 imagens de treino, ajustar
+  todos os pesos sobreajusta, e os adaptadores atuam como regularização.
+- `lora` e `qlora` estão empatados dentro do ruído.
+- O CLIPScore inverte a ordem pelos motivos do item 9.4.2.
+- Qualitativamente, o SLM adaptado acerta o vocabulário de domínio (reach stacker, spreader,
+  contêiner-tanque), mas ainda erra grafia ("contêiners", "portêinê") e às vezes inventa detalhes
+  — erros que o gold não comete.
+
+---
+
+## 10. Fontes e leitura complementar
 
 - Vinyals et al., *Show and Tell: A Neural Image Caption Generator* (2015).
 - Xu et al., *Show, Attend and Tell: Neural Image Caption Generation with Visual Attention* (2015).
