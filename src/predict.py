@@ -138,7 +138,7 @@ def predict_gold(cfg: Config, redo: bool = False) -> Path:
     print(f"gold ({captioner.name}, versao {versao_atual}) sobre {len(caminhos)} imagens -> {out}")
     erros, ultima, interrompido = 0, 0.0, False
     for i, path in enumerate(caminhos, 1):
-        legenda = None
+        legenda, duracao, tentativa = None, None, 0
         t0 = time.perf_counter()
         for tentativa in range(1, int(g.max_retries) + 1):
             espera = intervalo - (time.monotonic() - ultima)
@@ -146,7 +146,9 @@ def predict_gold(cfg: Config, redo: bool = False) -> Path:
                 time.sleep(espera)   # respeita o limite de requisicoes por minuto
             ultima = time.monotonic()
             try:
+                t_chamada = time.perf_counter()
                 legenda = captioner(path)
+                duracao = time.perf_counter() - t_chamada   # so a chamada bem-sucedida
                 break
             except Exception as exc:
                 print(f"  [{i}] {path.stem}: tentativa {tentativa} falhou — {exc}")
@@ -161,7 +163,10 @@ def predict_gold(cfg: Config, redo: bool = False) -> Path:
             continue
         append_jsonl(out, {"image_id": path.stem, "variante": "gold", "modelo": captioner.name,
                            "prompt_versao": versao_atual, "legenda": legenda,
-                           "segundos": time.perf_counter() - t0})
+                           # `segundos` = latencia da chamada que deu certo (vai para s/img);
+                           # `segundos_total` inclui o espacamento por cota e as novas tentativas.
+                           "segundos": duracao, "segundos_total": time.perf_counter() - t0,
+                           "tentativas": tentativa})
         print(f"  [{i}/{len(caminhos)}] {path.stem}: {legenda}")
     faltam = len(_pendentes(cfg, out, False, versao=versao_atual))
     if interrompido:

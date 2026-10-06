@@ -1,4 +1,6 @@
 """Gold: retomada por versao da especificacao e parada na cota diaria."""
+import json
+
 from PIL import Image
 
 from src.common import append_jsonl, write_json
@@ -42,3 +44,17 @@ def test_cota_diaria():
     assert cota_diaria_esgotada(diaria)
     assert not cota_diaria_esgotada(minuto)
     assert not cota_diaria_esgotada(Exception("503 UNAVAILABLE"))
+
+
+def test_tempo_do_gold_mede_so_a_chamada(tmp_path):
+    """`segundos` nao pode incluir o espacamento por cota nem as esperas entre tentativas."""
+    from src.predict import predict_gold
+
+    _setup(tmp_path, ["a"])
+    append_jsonl(tmp_path / "data" / "labels.jsonl", {"image_id": "a", "legendas": ["navio atracado no cais"]})
+    cfg = _cfg(tmp_path, "gold_model.provider=dummy", "gold_model.min_interval_s=5")
+    out = predict_gold(cfg)
+    linha = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines()][-1]
+    assert linha["tentativas"] == 1
+    assert linha["segundos"] < 1.0                     # dummy: instantaneo, sem esperas
+    assert linha["segundos_total"] >= linha["segundos"]
