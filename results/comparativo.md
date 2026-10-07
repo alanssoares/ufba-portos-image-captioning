@@ -28,6 +28,11 @@ Referencias: labels.jsonl (split test) — rotulador `claude-opus-5-5`. Modelo g
 
 | variante | ponto de partida | quantizacao | params treinaveis | % | VRAM pico (GB) | tempo (min) | melhor val loss | disco (MB) |
 |---|---|---|---|---|---|---|---|---|
+| base | — | — | 0 | — | — | — | — | 0 |
+| pretrain | base | nenhuma | 100.71 M | 4.73 | 8.0065 | 1.7278 | 2.1530 | 0 |
+| finetune | pretrain | nenhuma | 1821.29 M | 85.61 | 9.1802 | 3.4385 | 1.6377 | 0 |
+| lora | pretrain | nenhuma | 118.15 M | 5.51 | 8.2666 | 3.6444 | 1.3590 | 0 |
+| qlora | pretrain | nf4 4 bits (bitsandbytes) | 118.15 M | 5.51 | 8.1987 | 2.7311 | 1.3939 | 0 |
 
 ## Exemplos
 
